@@ -1,0 +1,61 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "saeitoshi"
+version = "0.1.0"
+description = "Fast inference engine for Sparse Autoencoders. The FAISS-equivalent for SAEs."
+readme = "README.md"
+license = { text = "MIT OR Apache-2.0" }
+authors = [{ name = "Khang Dang" }]
+requires-python = ">=3.10"
+keywords = ["sparse-autoencoder", "mechanistic-interpretability", "sae", "inference", "simd"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "numpy>=1.23",
+]
+
+[project.optional-dependencies]
+hf = ["huggingface_hub>=0.20"]
+scipy = ["scipy>=1.10"]
+test = ["pytest>=8.0", "safetensors>=0.4", "torch>=2.0", "sae_lens>=4.0"]
+dev = ["maturin>=1.7", "pytest>=8.0", "ruff>=0.5"]
+
+[project.scripts]
+saeitoshi = "sae.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Khangdang1690/saeitoshi"
+Repository = "https://github.com/Khangdang1690/saeitoshi"
+Issues = "https://github.com/Khangdang1690/saeitoshi/issues"
+
+[tool.maturin]
+manifest-path = "crates/saeitoshi-python/Cargo.toml"
+python-source = "python"
+module-name = "sae._native"
+features = ["pyo3/extension-module", "pyo3/abi3-py310"]
+strip = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "B", "UP"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
