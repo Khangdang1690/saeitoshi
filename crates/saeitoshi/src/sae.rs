@@ -4,7 +4,7 @@ use std::path::Path;
 
 use crate::config::SaeConfig;
 use crate::error::{Result, SaeError};
-use crate::kernels::{decoder, encoder};
+use crate::kernels::{decoder, encoder, select_backend, Backend};
 use crate::normalize;
 use crate::sparsify::{Sparsifier, TopKScratch};
 
@@ -14,6 +14,7 @@ pub struct Sae {
     enc: EncoderWeights,
     dec: DecoderWeights,
     sparsifier: Sparsifier,
+    backend: &'static Backend,
 }
 
 /// Encoder side of an SAE.
@@ -155,7 +156,19 @@ impl Sae {
                 got: vec![dec.b_dec.len()],
             });
         }
-        Ok(Self { cfg, enc, dec, sparsifier })
+        let backend = select_backend();
+        Ok(Self { cfg, enc, dec, sparsifier, backend })
+    }
+
+    /// Override the auto-detected backend (test + benchmark hook).
+    pub fn with_backend(mut self, backend: &'static Backend) -> Self {
+        self.backend = backend;
+        self
+    }
+
+    /// Name of the currently selected kernel backend.
+    pub fn backend_name(&self) -> &'static str {
+        self.backend.name
     }
 
     pub fn config(&self) -> &SaeConfig {
@@ -225,7 +238,7 @@ impl Sae {
         };
 
         let mut pre_acts: Vec<f32> = vec![0.0; batch * d_sae];
-        encoder::encode_f32(x_ref, &self.enc, &mut pre_acts, batch);
+        encoder::encode_f32(self.backend, x_ref, &self.enc, &mut pre_acts, batch);
 
         let mut scratch = TopKScratch::new();
         self.sparsifier.apply(&mut pre_acts, batch, d_sae, out, &mut scratch);

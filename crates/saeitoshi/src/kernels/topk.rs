@@ -1,4 +1,5 @@
-//! TopK selection entry point.
+//! TopK selection entry point. Scalar-only in M3 (the encoder matmul is the
+//! dominant cost; SIMD radix-select is a future optimization).
 
 use crate::sparsify::TopKScratch;
 

@@ -1,8 +1,14 @@
 //! Kernel module: runtime dispatch between scalar / AVX2 / AVX-512 / NEON.
 //!
-//! All `unsafe` SIMD intrinsics are walled off in the per-arch submodules
-//! gated by `#[cfg(target_arch = ...)]`. The scalar reference path is
-//! the parity gate (matches PyTorch op order).
+//! Layout:
+//! - [`Backend`] holds safe function pointers for each kernel operation.
+//!   Pointers are populated to either scalar reference impls or to
+//!   `#[target_feature]`-gated SIMD impls. The Sae stores `&'static Backend`
+//!   resolved once at construction via [`select_backend`].
+//! - All `unsafe` SIMD intrinsics live behind a thin safe wrapper in the
+//!   per-arch submodules; the wrapper is what's stored in `Backend`.
+
+use crate::sae::EncoderWeights;
 
 pub mod scalar;
 
@@ -16,22 +22,29 @@ pub mod decoder;
 pub mod encoder;
 pub mod topk;
 
-/// Vtable of the kernels for one runtime-detected CPU configuration.
-/// Field types are TBD until the M1 reference path lands; we fill them in
-/// then so the kernel signatures stay consistent across backends.
+/// Encoder kernel signature. Implementations must be **safe to call** —
+/// SIMD impls go through a safe wrapper that asserts the relevant
+/// `#[target_feature]` is present (guaranteed by [`select_backend`]).
+pub type EncodeFn = fn(&[f32], &EncoderWeights, &mut [f32], usize);
+
+/// Resolved CPU-specific kernel table. One static per backend, addressed
+/// as `&'static Backend` everywhere.
 pub struct Backend {
     pub name: &'static str,
+    pub encode_f32: EncodeFn,
 }
 
-/// Resolve the best backend for the current CPU. Called once at load time
-/// per `Sae` instance.
+/// Pick the fastest backend available on the current CPU.
+///
+/// Called once per `Sae` at construction. Cheap — `is_x86_feature_detected!`
+/// caches the cpuid lookup internally.
 pub fn select_backend() -> &'static Backend {
     #[cfg(target_arch = "x86_64")]
     {
-        if is_x86_feature_detected!("avx512bw") && is_x86_feature_detected!("avx512f") {
+        if std::is_x86_feature_detected!("avx512f") && std::is_x86_feature_detected!("avx512bw") {
             return &x86::AVX512;
         }
-        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+        if std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma") {
             return &x86::AVX2;
         }
     }

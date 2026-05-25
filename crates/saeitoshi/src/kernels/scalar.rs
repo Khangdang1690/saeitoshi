@@ -7,11 +7,14 @@
 use crate::sae::{DecoderWeights, EncoderWeights, SparseOut};
 use crate::sparsify::TopKScratch;
 
+use super::Backend;
+
 /// Encoder: `pre_acts[b, f] = b_enc[f] + sum_i x[b, i] * W_enc[f, i]`.
 ///
 /// `x` is `[batch * d_in]`, `pre_acts` is `[batch * d_sae]`, both row-major.
 /// `W_enc` is stored as `[d_sae, d_in]` row-major so the inner i-loop strides
 /// W_enc contiguously per output feature f.
+//
 // Hot kernel — keep integer-indexed loops so the SIMD replacement in M3
 // can drop in with the same shape. Iterator chains here hurt readability
 // and don't help the compiler vectorize the scalar path.
@@ -64,25 +67,22 @@ pub fn decode_sparse(z: &SparseOut, dec: &DecoderWeights, out: &mut [f32]) {
 
 /// Select the k largest entries from `scores` and write them, sorted by
 /// index ascending, into `scratch.indexed`. Ties broken by index ascending.
-///
-/// O(n log n) for M1. SIMD radix-select replaces this in M3.
 pub fn topk_select(scores: &[f32], k: usize, scratch: &mut TopKScratch) {
     scratch.indexed.clear();
     scratch.indexed.reserve(scores.len());
     for (i, &v) in scores.iter().enumerate() {
         scratch.indexed.push((i as u32, v));
     }
-    // Sort by score descending; ties broken by index ascending (stable tie-break).
     scratch.indexed.sort_by(|a, b| {
         b.1.partial_cmp(&a.1)
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| a.0.cmp(&b.0))
     });
     scratch.indexed.truncate(k);
-    // Re-sort by index ascending for stable downstream output.
     scratch.indexed.sort_by_key(|&(i, _)| i);
 }
 
-use super::Backend;
-
-pub static SCALAR: Backend = Backend { name: "scalar" };
+pub static SCALAR: Backend = Backend {
+    name: "scalar",
+    encode_f32,
+};

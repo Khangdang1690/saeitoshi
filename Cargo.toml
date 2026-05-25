@@ -8,7 +8,9 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+# AVX-512 intrinsics (e.g. _mm512_reduce_add_ps) used in kernels/x86.rs
+# stabilized in Rust 1.89.
+rust-version = "1.89"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Khangdang1690/saeitoshi"
 homepage = "https://github.com/Khangdang1690/saeitoshi"
