@@ -2,19 +2,16 @@
 
 PyPI name: ``saeitoshi``. Import name: ``sae``.
 
-Quickstart:
+Quickstart::
 
-    >>> import sae
-    >>> model = sae.SAE.load("./my_sae")           # SAELens directory layout
-    >>> features = model.encode(activations)        # numpy float32[B, d_in]
-    >>> recon = model.decode(features)
+    import sae
+    model = sae.SAE.load("./my_sae")           # SAELens directory layout
+    features = model.encode(activations)        # numpy float32[B, d_in]
+    recon = model.decode(features)              # numpy float32[B, d_in]
 """
 
 from __future__ import annotations
 
-__version__ = "0.1.0"
+from ._native import SAE, SparseFeatures, __version__
 
-# Native extension is wired up in M2.
-# from . import _native  # noqa: F401
-
-__all__ = ["__version__"]
+__all__ = ["SAE", "SparseFeatures", "__version__"]
