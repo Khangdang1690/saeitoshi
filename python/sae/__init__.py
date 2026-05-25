@@ -62,7 +62,21 @@ class SAE:
 
     @classmethod
     def load(cls, path: str | Path) -> "SAE":
-        return cls(_NativeSAE.load(str(path)))
+        """Load an SAE from a path or ``hf://`` URL.
+
+        Supported sources:
+        - SAELens directory (cfg.json + sae_weights.safetensors).
+        - EleutherAI sparsify directory (cfg.json + sae.safetensors).
+        - ``.sit`` single-file (saeitoshi native format).
+        - ``hf://org/repo[@revision][/subfolder]`` — downloads from
+          HuggingFace Hub (requires ``saeitoshi[hf]``).
+        """
+        path_str = str(path)
+        if path_str.startswith("hf://"):
+            from .loaders.hf import resolve as resolve_hf
+            local = resolve_hf(path_str)
+            return cls(_NativeSAE.load(str(local)))
+        return cls(_NativeSAE.load(path_str))
 
     # ---- Properties forwarded to the native type ----
 
