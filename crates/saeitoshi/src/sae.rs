@@ -276,4 +276,9 @@ impl Sae {
         self.encode(x, batch, &mut z)?;
         self.decode(&z, out)
     }
+
+    /// Serialize this SAE to a `.sit` file (FP32 in v0).
+    pub fn write_sit(&self, path: impl AsRef<Path>) -> Result<()> {
+        crate::sit::write(self, path.as_ref())
+    }
 }

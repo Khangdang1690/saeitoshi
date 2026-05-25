@@ -256,3 +256,68 @@ fn loader_round_trips_through_encode_decode() {
         assert!(v.is_finite(), "non-finite reconstruction: {v}");
     }
 }
+
+// ---------- .sit format round-trip ----------
+
+#[test]
+fn sit_round_trip_topk() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_saelens_dir(tmp.path());
+    let sae = Sae::load(tmp.path()).unwrap();
+
+    let sit_path = tmp.path().join("out.sit");
+    sae.write_sit(&sit_path).unwrap();
+
+    let loaded = Sae::load(&sit_path).unwrap();
+    assert_eq!(loaded.d_in(), sae.d_in());
+    assert_eq!(loaded.d_sae(), sae.d_sae());
+
+    // Same encode on same input → same SparseFeatures.
+    let x = vec![0.5f32, -0.5, 1.0, 0.25];
+    let mut z1 = SparseOut::new(sae.d_sae() as u32);
+    let mut z2 = SparseOut::new(loaded.d_sae() as u32);
+    sae.encode(&x, 1, &mut z1).unwrap();
+    loaded.encode(&x, 1, &mut z2).unwrap();
+    assert_eq!(z1.indices, z2.indices);
+    for (a, b) in z1.values.iter().zip(z2.values.iter()) {
+        assert!((a - b).abs() < 1e-6, "{a} vs {b}");
+    }
+}
+
+#[test]
+fn sit_round_trip_jumprelu() {
+    let d = 8;
+    let sae = identity_sae(d, d);
+    let cfg = sae.config().clone();
+    let enc = saeitoshi::sae::EncoderWeights {
+        w_enc: sae.encoder().w_enc.clone(),
+        b_enc: sae.encoder().b_enc.clone(),
+        d_in: d,
+        d_sae: d,
+    };
+    let dec = saeitoshi::sae::DecoderWeights {
+        w_dec: sae.decoder().w_dec.clone(),
+        b_dec: sae.decoder().b_dec.clone(),
+        d_in: d,
+        d_sae: d,
+    };
+    let with_jumprelu = Sae::from_parts(
+        cfg,
+        enc,
+        dec,
+        Sparsifier::JumpReLU { thresholds: vec![0.5; d] },
+    )
+    .unwrap();
+
+    let tmp = tempfile::tempdir().unwrap();
+    let sit_path = tmp.path().join("jumprelu.sit");
+    with_jumprelu.write_sit(&sit_path).unwrap();
+
+    let loaded = Sae::load(&sit_path).unwrap();
+    assert!(matches!(loaded.sparsifier(), Sparsifier::JumpReLU { .. }));
+
+    let x = vec![-1.0f32, 0.5, 0.6, 1.0, 0.0, 2.0, -0.3, 0.51];
+    let mut z = SparseOut::new(loaded.d_sae() as u32);
+    loaded.encode(&x, 1, &mut z).unwrap();
+    assert_eq!(z.row_indices(0), &[2, 3, 5, 7]);
+}

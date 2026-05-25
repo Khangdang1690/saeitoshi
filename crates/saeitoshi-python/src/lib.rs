@@ -97,8 +97,11 @@ impl PySparseFeatures {
     }
 }
 
-/// Loaded SAE ready for inference.
-#[pyclass(name = "SAE", module = "sae._native")]
+/// Loaded SAE ready for inference. The Python-facing `sae.SAE` class
+/// composes (does not subclass) this type so streaming and top-activations
+/// helpers can be added in pure Python while leaving Rust pyclass attrs
+/// simple.
+#[pyclass(name = "NativeSAE", module = "sae._native")]
 struct PySae {
     inner: RustSae,
 }
