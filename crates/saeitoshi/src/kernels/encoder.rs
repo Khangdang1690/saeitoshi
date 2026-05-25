@@ -1,5 +1,9 @@
-//! Encoder matmul: `[B, d_in] @ [d_in, d_sae] + b_enc -> [B, d_sae]`.
-//!
-//! This is the hottest path in the library. Blocked GEMM tile loop, generic
-//! over weight dtype and SIMD backend. Implementation lands in M1 (scalar)
-//! and M3 (SIMD).
+//! Encoder matmul entry point. Dispatches to a backend (scalar in M1, SIMD
+//! variants in M3).
+
+use crate::sae::EncoderWeights;
+
+#[inline]
+pub fn encode_f32(x: &[f32], enc: &EncoderWeights, pre_acts: &mut [f32], batch: usize) {
+    super::scalar::encode_f32(x, enc, pre_acts, batch);
+}

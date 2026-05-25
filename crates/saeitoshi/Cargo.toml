@@ -30,6 +30,11 @@ safetensors.workspace = true
 criterion = "0.5"
 proptest = "1.5"
 tempfile = "3.10"
+# Re-listed here so integration tests under `tests/` can build SAELens-format
+# fixtures without depending on the library's internal types.
+safetensors = { workspace = true }
+bytemuck = { workspace = true }
+serde_json = { workspace = true }
 
 [[bench]]
 name = "encoder"

@@ -1,3 +1,8 @@
-//! Sparse decoder: gather k rows of `W_dec`, multiply by their feature
-//! values, accumulate into the dense reconstruction. Implementation lands
-//! in M1 (scalar) and M3 (SIMD gather).
+//! Sparse decoder entry point.
+
+use crate::sae::{DecoderWeights, SparseOut};
+
+#[inline]
+pub fn decode_sparse(z: &SparseOut, dec: &DecoderWeights, out: &mut [f32]) {
+    super::scalar::decode_sparse(z, dec, out);
+}
