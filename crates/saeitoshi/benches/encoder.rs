@@ -83,7 +83,13 @@ fn bench_encoder(c: &mut Criterion) {
         let h_d_sae = 16_384usize;
         let h_batch = 512usize;
         if std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma") {
-            run_tiled_simd(c, &saeitoshi::backends::AVX2_TILED, h_d_in, h_d_sae, h_batch);
+            run_tiled_simd(
+                c,
+                &saeitoshi::backends::AVX2_TILED,
+                h_d_in,
+                h_d_sae,
+                h_batch,
+            );
         }
         if std::is_x86_feature_detected!("avx512f") {
             run_tiled_simd(

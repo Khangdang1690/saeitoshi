@@ -41,7 +41,24 @@ pub struct Backend {
 ///
 /// Called once per `Sae` at construction. Cheap — `is_x86_feature_detected!`
 /// caches the cpuid lookup internally.
+///
+/// When the `perf-v2` feature is enabled, prefers the cache-tiled GEMM
+/// backends (see `kernels::gemm`) over the legacy per-dot-product paths.
+/// Set `SAEITOSHI_BACKEND=legacy` to force the old path for A/B comparison.
 pub fn select_backend() -> &'static Backend {
+    #[cfg(feature = "perf-v2")]
+    if std::env::var("SAEITOSHI_BACKEND").as_deref() != Ok("legacy") {
+        #[cfg(target_arch = "x86_64")]
+        {
+            if std::is_x86_feature_detected!("avx512f") {
+                return &gemm::tiled_x86::AVX512_TILED;
+            }
+            if std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma") {
+                return &gemm::tiled_x86::AVX2_TILED;
+            }
+        }
+    }
+
     #[cfg(target_arch = "x86_64")]
     {
         if std::is_x86_feature_detected!("avx512f") && std::is_x86_feature_detected!("avx512bw") {
@@ -58,4 +75,33 @@ pub fn select_backend() -> &'static Backend {
         }
     }
     &scalar::SCALAR
+}
+
+/// Return the packing `m_r` required by `backend`, or `None` if the
+/// backend operates on row-major weights.
+///
+/// Used by `Sae::from_parts` to repack `EncoderWeights` once at SAE
+/// construction time when a tiled backend is selected. Pointer equality
+/// against the `&'static Backend` constants is the dispatch mechanism —
+/// no string parsing.
+#[cfg(feature = "perf-v2")]
+pub fn backend_m_r(backend: &Backend) -> Option<usize> {
+    if std::ptr::eq(backend, &gemm::tiled_scalar::SCALAR_TILED) {
+        return Some(gemm::DEFAULT_M_R);
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        if std::ptr::eq(backend, &gemm::tiled_x86::AVX2_TILED)
+            || std::ptr::eq(backend, &gemm::tiled_x86::AVX512_TILED)
+        {
+            return Some(gemm::DEFAULT_M_R);
+        }
+    }
+    None
+}
+
+/// Stub when `perf-v2` is disabled — no backend needs packing.
+#[cfg(not(feature = "perf-v2"))]
+pub fn backend_m_r(_backend: &Backend) -> Option<usize> {
+    None
 }

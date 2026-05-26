@@ -19,3 +19,8 @@ saeitoshi = { path = "../saeitoshi" }
 pyo3 = { version = "0.22", features = ["extension-module", "abi3-py310"] }
 numpy = "0.22"
 ndarray.workspace = true
+
+[features]
+# Pass-through to the inner crate's feature so `maturin develop --features
+# perf-v2` (and downstream wheels) can opt into the tiled GEMM backend.
+perf-v2 = ["saeitoshi/perf-v2"]

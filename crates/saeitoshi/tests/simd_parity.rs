@@ -118,6 +118,13 @@ fn neon_parity_with_scalar() {
 fn auto_selected_backend_matches_scalar() {
     let backend = select_backend();
     eprintln!("auto-selected backend: {}", backend.name);
+    #[cfg(all(feature = "perf-v2", target_arch = "x86_64"))]
+    if saeitoshi::kernels::backend_m_r(backend).is_some() {
+        // Auto-selected backend wants packed weights — route through the
+        // packing-aware parity helper instead of feeding it row-major data.
+        check_tiled_simd_across_sizes(backend.name, backend);
+        return;
+    }
     check_backend_across_sizes(backend.name, backend);
 }
 
@@ -224,7 +231,7 @@ fn check_tiled_simd_across_sizes(name: &str, backend: &Backend) {
         (128, 256),
         (256, 512),
         (1024, 2048),
-        (513, 96),  // odd d_in + d_sae with partial trailing panel
+        (513, 96), // odd d_in + d_sae with partial trailing panel
     ];
     for (i, &(d_in, d_sae)) in sizes.iter().enumerate() {
         // Batch 1 / 5 / 6 / 12 / 13 covers below, partial, exact, exact, and
@@ -255,6 +262,49 @@ fn avx512_tiled_parity_with_scalar() {
         return;
     }
     check_tiled_simd_across_sizes("avx512_tiled", &AVX512_TILED);
+}
+
+/// Tiled backends do their own M-block rayon split internally. Different
+/// thread counts → different task partitioning → different timing of
+/// writes to disjoint columns of `pre_acts`. We need parity to hold at
+/// every thread count we ship (1/2/4/24) to surface false-sharing bugs,
+/// alignment bugs in the partial-panel scalar fallback, and any subtle
+/// races we might have missed in the `AtomicPtr` handoff.
+#[cfg(all(feature = "perf-v2", target_arch = "x86_64"))]
+#[test]
+fn avx2_tiled_parity_across_thread_counts() {
+    use rayon::ThreadPoolBuilder;
+    use saeitoshi::backends::AVX2_TILED;
+
+    if !std::is_x86_feature_detected!("avx2") || !std::is_x86_feature_detected!("fma") {
+        eprintln!("skipping: AVX2/FMA not available on this CPU");
+        return;
+    }
+
+    // Shape large enough to span multiple M-blocks (M_C = 512, m_r = 16 →
+    // 32 panels per M-block, so d_sae = 2048 → 4 M-blocks; 24 threads
+    // exercises work-stealing on the trailing tasks).
+    let d_in = 256usize;
+    let d_sae = 2048usize;
+    let batch = 12usize;
+
+    for &num_threads in &[1usize, 2, 4, 24] {
+        let pool = ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .build()
+            .expect("rayon pool build");
+
+        pool.install(|| {
+            check_tiled_simd_parity(
+                &format!("avx2_tiled[threads={num_threads}]"),
+                &AVX2_TILED,
+                d_in,
+                d_sae,
+                batch,
+                7777 + num_threads as u64,
+            );
+        });
+    }
 }
 
 #[cfg(feature = "perf-v2")]

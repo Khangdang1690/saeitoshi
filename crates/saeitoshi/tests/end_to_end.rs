@@ -107,7 +107,10 @@ fn jumprelu_strict_threshold_and_relu_floor() {
         b_enc: sae.encoder().b_enc.clone(),
         d_in: d,
         d_sae: d,
-        layout: WeightLayout::RowMajor,
+        // Propagate the source SAE's layout — with perf-v2 enabled,
+        // `from_parts` already repacked the original SAE, so cloning
+        // returns packed weights that should be re-wrapped as packed.
+        layout: sae.encoder().layout,
     };
     let dec = DecoderWeights {
         w_dec: sae.decoder().w_dec.clone(),
@@ -143,7 +146,10 @@ fn relu_drops_nonpositive() {
         b_enc: sae.encoder().b_enc.clone(),
         d_in: d,
         d_sae: d,
-        layout: WeightLayout::RowMajor,
+        // Propagate the source SAE's layout — with perf-v2 enabled,
+        // `from_parts` already repacked the original SAE, so cloning
+        // returns packed weights that should be re-wrapped as packed.
+        layout: sae.encoder().layout,
     };
     let dec = DecoderWeights {
         w_dec: sae.decoder().w_dec.clone(),
@@ -244,7 +250,8 @@ fn loads_saelens_directory() {
     let expected = 12.0 * 0.01;
     let feature = 0usize;
     let d_in_idx = 2usize;
-    let got = sae.encoder().w_enc[feature * 4 + d_in_idx];
+    let w = sae.encoder().w_enc_row_major();
+    let got = w[feature * 4 + d_in_idx];
     assert!(
         (got - expected).abs() < 1e-6,
         "got {got}, expected {expected}"
@@ -304,7 +311,7 @@ fn sit_round_trip_jumprelu() {
         b_enc: sae.encoder().b_enc.clone(),
         d_in: d,
         d_sae: d,
-        layout: WeightLayout::RowMajor,
+        layout: sae.encoder().layout,
     };
     let dec = saeitoshi::sae::DecoderWeights {
         w_dec: sae.decoder().w_dec.clone(),

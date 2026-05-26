@@ -196,6 +196,20 @@ unsafe fn microkernel_16x12_avx512(
 
 // ---------------- scalar fallback for tail tiles ----------------
 
+/// Sharing `*mut f32` across rayon tasks for the M-block parallel pass.
+///
+/// The parallel iteration in [`encode_f32_avx2_tiled`] / `_avx512_tiled`
+/// partitions the M (feature) dimension across rayon tasks. Each task
+/// writes to columns `[panel * M_R, (panel + 1) * M_R)` of `pre_acts` for
+/// the panels it owns; column ranges are disjoint across tasks and
+/// `M_R = 16` aligns to a 64-byte cache line, so there is neither
+/// aliasing nor false sharing. We cannot express that via `&mut [f32]`
+/// (rayon's safe APIs split slices by leading dimension, not stride), so
+/// we hand the pointer to each task via [`AtomicPtr`], which is
+/// `Send + Sync` by construction and dodges Rust 2021's disjoint-capture
+/// trap that splits a `*mut f32` newtype back into its non-`Send` field.
+use std::sync::atomic::{AtomicPtr, Ordering};
+
 /// Compute a partial tile via scalar arithmetic. Used for:
 /// - the trailing batch rows (`batch % N_R != 0`) of every panel
 /// - the entire trailing panel (`d_sae % M_R != 0`)
@@ -204,10 +218,15 @@ unsafe fn microkernel_16x12_avx512(
 /// (bias-init + left-to-right K reduction), so this code path is bit-equal
 /// to the legacy scalar — only the fast SIMD path introduces the FMA
 /// reordering that drives the 1e-5 tolerance.
-fn scalar_tile_for_panel(
+///
+/// # Safety
+/// `pre_acts_ptr` must be valid for writes at `b * d_sae + f` for every
+/// `b` in `batch_range` and `f` in `[panel * m_r, (panel * m_r + m_r).min(d_sae))`.
+/// Concurrent calls with disjoint `(panel, batch_range)` tuples are safe.
+unsafe fn scalar_tile_for_panel_raw(
     enc: &EncoderWeights,
     x: &[f32],
-    pre_acts: &mut [f32],
+    pre_acts_ptr: *mut f32,
     batch_range: std::ops::Range<usize>,
     panel: usize,
     m_r: usize,
@@ -225,18 +244,97 @@ fn scalar_tile_for_panel(
             for k in 0..d_in {
                 acc += x[b * d_in + k] * enc.w_enc[panel_base + k * m_r + lane];
             }
-            pre_acts[b * d_sae + f] = acc;
+            *pre_acts_ptr.add(b * d_sae + f) = acc;
         }
+    }
+}
+
+// ---------------- per-panel helpers (raw-ptr, thread-safe via disjoint cols) ----------------
+
+/// Run the AVX2 microkernel for every full N_R-batch tile on a single
+/// full-width panel, then a scalar tail for the partial batch rows on the
+/// same panel.
+///
+/// # Safety
+/// Caller ensures `lanes_used == M_R_AVX2` for this panel and that
+/// `pre_acts_ptr` is valid for writes at `b * d_sae + f` for every
+/// `b ∈ 0..batch`, `f ∈ [panel * M_R_AVX2, (panel + 1) * M_R_AVX2)`.
+/// AVX2+FMA target feature must be available (gated at backend select).
+unsafe fn process_full_panel_avx2(
+    panel: usize,
+    x: &[f32],
+    enc: &EncoderWeights,
+    pre_acts_ptr: *mut f32,
+    batch: usize,
+) {
+    let d_in = enc.d_in;
+    let d_sae = enc.d_sae;
+    let m_r = M_R_AVX2;
+    let n_full_batches = batch / N_R_AVX2;
+    let b_tail_start = n_full_batches * N_R_AVX2;
+    let panel_base = panel * d_in * m_r;
+    let f0 = panel * m_r;
+
+    let packed_w_panel = enc.w_enc.as_ptr().add(panel_base);
+    let bias_base = enc.b_enc.as_ptr().add(f0);
+
+    for batch_block in 0..n_full_batches {
+        let b0 = batch_block * N_R_AVX2;
+        microkernel_16x6(
+            packed_w_panel,
+            x.as_ptr().add(b0 * d_in),
+            d_in,
+            pre_acts_ptr.add(b0 * d_sae + f0),
+            d_sae,
+            bias_base,
+        );
+    }
+    if b_tail_start < batch {
+        scalar_tile_for_panel_raw(enc, x, pre_acts_ptr, b_tail_start..batch, panel, m_r);
+    }
+}
+
+/// AVX-512 variant of [`process_full_panel_avx2`]. Same SAFETY contract.
+unsafe fn process_full_panel_avx512(
+    panel: usize,
+    x: &[f32],
+    enc: &EncoderWeights,
+    pre_acts_ptr: *mut f32,
+    batch: usize,
+) {
+    let d_in = enc.d_in;
+    let d_sae = enc.d_sae;
+    let m_r = M_R_AVX512;
+    let n_full_batches = batch / N_R_AVX512;
+    let b_tail_start = n_full_batches * N_R_AVX512;
+    let panel_base = panel * d_in * m_r;
+    let f0 = panel * m_r;
+
+    let packed_w_panel = enc.w_enc.as_ptr().add(panel_base);
+    let bias_base = enc.b_enc.as_ptr().add(f0);
+
+    for batch_block in 0..n_full_batches {
+        let b0 = batch_block * N_R_AVX512;
+        microkernel_16x12_avx512(
+            packed_w_panel,
+            x.as_ptr().add(b0 * d_in),
+            d_in,
+            pre_acts_ptr.add(b0 * d_sae + f0),
+            d_sae,
+            bias_base,
+        );
+    }
+    if b_tail_start < batch {
+        scalar_tile_for_panel_raw(enc, x, pre_acts_ptr, b_tail_start..batch, panel, m_r);
     }
 }
 
 // ---------------- AVX2 outer loop ----------------
 
 fn encode_f32_avx2_tiled(x: &[f32], enc: &EncoderWeights, pre_acts: &mut [f32], batch: usize) {
-    // SAFETY: AVX2+FMA detection is done in `select_backend` before this fn
-    // pointer is returned; the microkernel below has matching
-    // `#[target_feature]` so the compiler will only emit AVX2/FMA
-    // instructions inside that boundary.
+    // SAFETY for the unsafe blocks below: AVX2+FMA detection happens in
+    // `select_backend` before this fn pointer is returned; the microkernel
+    // is `#[target_feature(enable = "avx2,fma")]`.
     let d_in = enc.d_in;
     let d_sae = enc.d_sae;
     let m_r = match enc.layout {
@@ -255,45 +353,53 @@ fn encode_f32_avx2_tiled(x: &[f32], enc: &EncoderWeights, pre_acts: &mut [f32], 
     debug_assert_eq!(enc.w_enc.len(), packed_len(d_sae, d_in, m_r));
 
     let n_panels = panel_count(d_sae, m_r);
-    let n_full_batches = batch / N_R_AVX2;
-    let b_tail_start = n_full_batches * N_R_AVX2;
+    let n_full_panels = d_sae / m_r;
+    let has_partial_panel = n_panels > n_full_panels;
 
-    let x_base = x.as_ptr();
-    let packed_w_base = enc.w_enc.as_ptr();
-    let bias_base_full = enc.b_enc.as_ptr();
-    let pre_acts_base = pre_acts.as_mut_ptr();
+    if crate::kernels::encoder::parallel_enabled() && n_full_panels > 1 {
+        // M-block grouping: with DEFAULT_M_C = 512 and m_r = 16 we have
+        // 32 full panels per M-block — each rayon task processes one
+        // M-block's worth of panels so it can amortize task-setup overhead
+        // across multiple microkernel invocations. At d_sae = 16384 we
+        // generate ~32 tasks for 24 threads, plenty of work-stealing slack
+        // for Raptor Lake's heterogeneous P/E cores.
+        let panels_per_m_block = (super::DEFAULT_M_C / m_r).max(1);
+        let n_m_blocks = n_full_panels.div_ceil(panels_per_m_block);
+        let pre_acts_ptr = AtomicPtr::new(pre_acts.as_mut_ptr());
 
-    for panel in 0..n_panels {
-        let f0 = panel * m_r;
-        let lanes_used = (f0 + m_r).min(d_sae) - f0;
-        let panel_base = panel * d_in * m_r;
-
-        if lanes_used == M_R_AVX2 {
-            for batch_block in 0..n_full_batches {
-                let b0 = batch_block * N_R_AVX2;
-                // SAFETY: b0 + N_R_AVX2 ≤ batch (by n_full_batches loop bound),
-                // f0 + M_R_AVX2 ≤ d_sae (lanes_used == M_R_AVX2 branch),
-                // packed W panel of length d_in * M_R_AVX2 is in-bounds at
-                // packed_w_base + panel_base.
+        use rayon::prelude::*;
+        (0..n_m_blocks).into_par_iter().for_each(|m_block| {
+            let ptr = pre_acts_ptr.load(Ordering::Relaxed);
+            let panel_start = m_block * panels_per_m_block;
+            let panel_end = ((m_block + 1) * panels_per_m_block).min(n_full_panels);
+            for panel in panel_start..panel_end {
+                // SAFETY: panel ∈ [0, n_full_panels), so f0 + M_R ≤ d_sae;
+                // each task writes columns [f0, f0+M_R) of pre_acts, and
+                // disjoint panels across tasks → disjoint column ranges,
+                // both aligned to the M_R-float (= 64 B) cache line.
                 unsafe {
-                    microkernel_16x6(
-                        packed_w_base.add(panel_base),
-                        x_base.add(b0 * d_in),
-                        d_in,
-                        pre_acts_base.add(b0 * d_sae + f0),
-                        d_sae,
-                        bias_base_full.add(f0),
-                    );
+                    process_full_panel_avx2(panel, x, enc, ptr, batch);
                 }
             }
-            // Scalar fallback for the trailing batch rows on this full panel.
-            if b_tail_start < batch {
-                scalar_tile_for_panel(enc, x, pre_acts, b_tail_start..batch, panel, m_r);
+        });
+    } else {
+        let ptr = pre_acts.as_mut_ptr();
+        for panel in 0..n_full_panels {
+            unsafe {
+                process_full_panel_avx2(panel, x, enc, ptr, batch);
             }
-        } else {
-            // Partial-width panel (zero-padded weights past lanes_used):
-            // scalar fallback for the whole batch on this panel.
-            scalar_tile_for_panel(enc, x, pre_acts, 0..batch, panel, m_r);
+        }
+    }
+
+    if has_partial_panel {
+        // Partial trailing panel — column range is disjoint from every
+        // full panel handled above, so writing it serially after the join
+        // is safe. Use the safe slice API (we hold exclusive &mut).
+        let panel = n_full_panels;
+        let ptr = pre_acts.as_mut_ptr();
+        // SAFETY: parallel writes joined; this is the only writer.
+        unsafe {
+            scalar_tile_for_panel_raw(enc, x, ptr, 0..batch, panel, m_r);
         }
     }
 }
@@ -306,8 +412,7 @@ pub static AVX2_TILED: Backend = Backend {
 // ---------------- AVX-512 outer loop ----------------
 
 fn encode_f32_avx512_tiled(x: &[f32], enc: &EncoderWeights, pre_acts: &mut [f32], batch: usize) {
-    // SAFETY: AVX-512F detection guarded at `select_backend`. Same structure
-    // as the AVX2 path; the only difference is N_R and the microkernel.
+    // SAFETY: AVX-512F detection guarded at `select_backend`.
     let d_in = enc.d_in;
     let d_sae = enc.d_sae;
     let m_r = match enc.layout {
@@ -326,38 +431,39 @@ fn encode_f32_avx512_tiled(x: &[f32], enc: &EncoderWeights, pre_acts: &mut [f32]
     debug_assert_eq!(enc.w_enc.len(), packed_len(d_sae, d_in, m_r));
 
     let n_panels = panel_count(d_sae, m_r);
-    let n_full_batches = batch / N_R_AVX512;
-    let b_tail_start = n_full_batches * N_R_AVX512;
+    let n_full_panels = d_sae / m_r;
+    let has_partial_panel = n_panels > n_full_panels;
 
-    let x_base = x.as_ptr();
-    let packed_w_base = enc.w_enc.as_ptr();
-    let bias_base_full = enc.b_enc.as_ptr();
-    let pre_acts_base = pre_acts.as_mut_ptr();
+    if crate::kernels::encoder::parallel_enabled() && n_full_panels > 1 {
+        let panels_per_m_block = (super::DEFAULT_M_C / m_r).max(1);
+        let n_m_blocks = n_full_panels.div_ceil(panels_per_m_block);
+        let pre_acts_ptr = AtomicPtr::new(pre_acts.as_mut_ptr());
 
-    for panel in 0..n_panels {
-        let f0 = panel * m_r;
-        let lanes_used = (f0 + m_r).min(d_sae) - f0;
-        let panel_base = panel * d_in * m_r;
-
-        if lanes_used == M_R_AVX512 {
-            for batch_block in 0..n_full_batches {
-                let b0 = batch_block * N_R_AVX512;
+        use rayon::prelude::*;
+        (0..n_m_blocks).into_par_iter().for_each(|m_block| {
+            let ptr = pre_acts_ptr.load(Ordering::Relaxed);
+            let panel_start = m_block * panels_per_m_block;
+            let panel_end = ((m_block + 1) * panels_per_m_block).min(n_full_panels);
+            for panel in panel_start..panel_end {
                 unsafe {
-                    microkernel_16x12_avx512(
-                        packed_w_base.add(panel_base),
-                        x_base.add(b0 * d_in),
-                        d_in,
-                        pre_acts_base.add(b0 * d_sae + f0),
-                        d_sae,
-                        bias_base_full.add(f0),
-                    );
+                    process_full_panel_avx512(panel, x, enc, ptr, batch);
                 }
             }
-            if b_tail_start < batch {
-                scalar_tile_for_panel(enc, x, pre_acts, b_tail_start..batch, panel, m_r);
+        });
+    } else {
+        let ptr = pre_acts.as_mut_ptr();
+        for panel in 0..n_full_panels {
+            unsafe {
+                process_full_panel_avx512(panel, x, enc, ptr, batch);
             }
-        } else {
-            scalar_tile_for_panel(enc, x, pre_acts, 0..batch, panel, m_r);
+        }
+    }
+
+    if has_partial_panel {
+        let panel = n_full_panels;
+        let ptr = pre_acts.as_mut_ptr();
+        unsafe {
+            scalar_tile_for_panel_raw(enc, x, ptr, 0..batch, panel, m_r);
         }
     }
 }

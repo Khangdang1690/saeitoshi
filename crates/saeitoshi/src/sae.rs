@@ -51,6 +51,29 @@ pub struct EncoderWeights {
     pub layout: WeightLayout,
 }
 
+impl EncoderWeights {
+    /// Return `w_enc` in the canonical `[d_sae, d_in]` row-major form.
+    ///
+    /// Borrows the underlying buffer when the layout is already
+    /// `RowMajor`; otherwise unpacks into an owned buffer on demand.
+    /// Used by callers that need to inspect or serialize weights without
+    /// caring which backend produced them (e.g. tests, the `.sit` writer).
+    pub fn w_enc_row_major(&self) -> std::borrow::Cow<'_, [f32]> {
+        match self.layout {
+            WeightLayout::RowMajor => std::borrow::Cow::Borrowed(&self.w_enc),
+            #[cfg(feature = "perf-v2")]
+            WeightLayout::PackedPanels { m_r } => std::borrow::Cow::Owned(
+                crate::kernels::gemm::pack::unpack_w_enc(&self.w_enc, self.d_sae, self.d_in, m_r)
+                    .into_vec(),
+            ),
+            #[cfg(not(feature = "perf-v2"))]
+            WeightLayout::PackedPanels { .. } => {
+                unreachable!("PackedPanels layout is only constructible with the perf-v2 feature")
+            }
+        }
+    }
+}
+
 /// Decoder side of an SAE.
 ///
 /// `w_dec` is `[d_sae, d_in]` row-major. Each row is one feature's decoder
@@ -149,10 +172,23 @@ impl Sae {
                 got: vec![dec.d_sae, dec.d_in],
             });
         }
-        if enc.w_enc.len() != cfg.d_sae * cfg.d_in {
+        // Shape check accepts both row-major and packed layouts. Row-major
+        // length is d_sae * d_in; packed length depends on m_r and may be
+        // padded (panel_count(d_sae, m_r) * m_r * d_in). Tests that
+        // round-trip packed weights need the packed branch.
+        let expected_w_len = match enc.layout {
+            WeightLayout::RowMajor => cfg.d_sae * cfg.d_in,
+            #[cfg(feature = "perf-v2")]
+            WeightLayout::PackedPanels { m_r } => {
+                crate::kernels::gemm::pack::packed_len(cfg.d_sae, cfg.d_in, m_r)
+            }
+            #[cfg(not(feature = "perf-v2"))]
+            WeightLayout::PackedPanels { .. } => unreachable!(),
+        };
+        if enc.w_enc.len() != expected_w_len {
             return Err(SaeError::ShapeMismatch {
                 name: "w_enc.len".into(),
-                expected: vec![cfg.d_sae * cfg.d_in],
+                expected: vec![expected_w_len],
                 got: vec![enc.w_enc.len()],
             });
         }
@@ -178,6 +214,17 @@ impl Sae {
             });
         }
         let backend = select_backend();
+        // If the selected backend needs packed weights (perf-v2 tiled
+        // backends), repack now. This amortizes the layout permutation
+        // across every encode call for the lifetime of the SAE.
+        #[cfg(feature = "perf-v2")]
+        let enc = {
+            let mut enc = enc;
+            if let Some(m_r) = crate::kernels::backend_m_r(backend) {
+                crate::kernels::gemm::pack::repack(&mut enc, m_r);
+            }
+            enc
+        };
         Ok(Self {
             cfg,
             enc,
