@@ -183,6 +183,80 @@ fn scalar_tiled_parity_with_scalar_standard_sizes() {
     }
 }
 
+#[cfg(all(feature = "perf-v2", target_arch = "x86_64"))]
+fn check_tiled_simd_parity(
+    name: &str,
+    backend: &Backend,
+    d_in: usize,
+    d_sae: usize,
+    batch: usize,
+    seed: u64,
+) {
+    use saeitoshi::kernels::gemm::DEFAULT_M_R;
+    let row_enc = make_encoder(d_in, d_sae, seed);
+    let packed_enc = make_packed_encoder(d_in, d_sae, seed, DEFAULT_M_R);
+    let x = lcg_floats(batch * d_in, seed.wrapping_add(100), 1.0);
+    let baseline = run_backend(&SCALAR, &x, &row_enc, batch);
+    let candidate = run_backend(backend, &x, &packed_enc, batch);
+    let max_err = baseline
+        .iter()
+        .zip(candidate.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f32, f32::max);
+    assert!(
+        max_err < 1e-5,
+        "{name} parity (d_in={d_in}, d_sae={d_sae}, batch={batch}, seed={seed}): \
+         max abs error {max_err}",
+    );
+}
+
+#[cfg(all(feature = "perf-v2", target_arch = "x86_64"))]
+fn check_tiled_simd_across_sizes(name: &str, backend: &Backend) {
+    // Standard grid plus a wider d_in to stress the K loop, and batch
+    // values that exercise both full N_R tiles and partial-batch tails.
+    let sizes = [
+        (4usize, 16),
+        (7, 16),
+        (8, 32),
+        (16, 32),
+        (33, 64),
+        (64, 128),
+        (128, 256),
+        (256, 512),
+        (1024, 2048),
+        (513, 96),  // odd d_in + d_sae with partial trailing panel
+    ];
+    for (i, &(d_in, d_sae)) in sizes.iter().enumerate() {
+        // Batch 1 / 5 / 6 / 12 / 13 covers below, partial, exact, exact, and
+        // partial fills of both N_R=6 (AVX2) and N_R=12 (AVX-512) tiles.
+        for &batch in &[1usize, 5, 6, 12, 13] {
+            check_tiled_simd_parity(name, backend, d_in, d_sae, batch, 300 + i as u64);
+        }
+    }
+}
+
+#[cfg(all(feature = "perf-v2", target_arch = "x86_64"))]
+#[test]
+fn avx2_tiled_parity_with_scalar() {
+    use saeitoshi::backends::AVX2_TILED;
+    if !std::is_x86_feature_detected!("avx2") || !std::is_x86_feature_detected!("fma") {
+        eprintln!("skipping: AVX2/FMA not available on this CPU");
+        return;
+    }
+    check_tiled_simd_across_sizes("avx2_tiled", &AVX2_TILED);
+}
+
+#[cfg(all(feature = "perf-v2", target_arch = "x86_64"))]
+#[test]
+fn avx512_tiled_parity_with_scalar() {
+    use saeitoshi::backends::AVX512_TILED;
+    if !std::is_x86_feature_detected!("avx512f") {
+        eprintln!("skipping: AVX-512F not available on this CPU");
+        return;
+    }
+    check_tiled_simd_across_sizes("avx512_tiled", &AVX512_TILED);
+}
+
 #[cfg(feature = "perf-v2")]
 #[test]
 fn scalar_tiled_parity_awkward_d_in() {

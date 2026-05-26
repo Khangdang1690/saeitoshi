@@ -37,6 +37,9 @@
 pub mod pack;
 pub mod tiled_scalar;
 
+#[cfg(target_arch = "x86_64")]
+pub mod tiled_x86;
+
 /// Default register-tile row count (M_R).
 ///
 /// Tuned for AVX2: M_R = 16 = 2 ymm registers wide. Same value works for
