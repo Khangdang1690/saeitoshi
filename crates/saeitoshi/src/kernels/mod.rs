@@ -22,6 +22,9 @@ pub mod decoder;
 pub mod encoder;
 pub mod topk;
 
+#[cfg(feature = "topk-v2")]
+pub mod topk_heap;
+
 #[cfg(feature = "perf-v2")]
 pub mod gemm;
 

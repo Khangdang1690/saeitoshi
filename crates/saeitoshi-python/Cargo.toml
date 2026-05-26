@@ -21,8 +21,9 @@ numpy = "0.22"
 ndarray.workspace = true
 
 [features]
-default = ["perf-v2"]
+default = ["perf-v2", "topk-v2"]
 # Pass-through to the inner crate's feature. Default is on; flip off by
 # building with `maturin develop --no-default-features` to ship the v0
 # legacy kernel for regression bisection.
 perf-v2 = ["saeitoshi/perf-v2"]
+topk-v2 = ["saeitoshi/topk-v2"]

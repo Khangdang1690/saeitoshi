@@ -86,23 +86,81 @@ fn apply_topk(
     scratch: &mut TopKScratch,
 ) {
     let k = k.min(d_sae);
-    for r in 0..tile_rows {
-        let row = &mut pre_acts[r * d_sae..(r + 1) * d_sae];
-        if let Some(scales) = rescale {
-            for (v, &s) in row.iter_mut().zip(scales.iter()) {
-                *v *= s;
+
+    // Rayon dispatch overhead is ~10us; only parallelize when there's
+    // enough work per call to amortize it. Threshold picked so that
+    // d_sae=16384 needs tile_rows>=4, d_sae=2048 needs tile_rows>=16.
+    const PAR_THRESHOLD_ELEMS: usize = 8 * 1024;
+    let use_par = tile_rows >= 4 && tile_rows.saturating_mul(d_sae) >= PAR_THRESHOLD_ELEMS;
+
+    if !use_par {
+        for r in 0..tile_rows {
+            let row = &mut pre_acts[r * d_sae..(r + 1) * d_sae];
+            if let Some(scales) = rescale {
+                for (v, &s) in row.iter_mut().zip(scales.iter()) {
+                    *v *= s;
+                }
             }
-        }
-        topk::select_into(row, k, scratch);
-        // scratch.indexed holds the top-k (idx, value) pairs, sorted by index ascending.
-        for &(idx, val) in scratch.indexed.iter() {
-            let v = if post_relu { val.max(0.0) } else { val };
-            if post_relu && v == 0.0 {
-                continue;
+            topk::select_into(row, k, scratch);
+            for &(idx, val) in scratch.indexed.iter() {
+                let v = if post_relu { val.max(0.0) } else { val };
+                if post_relu && v == 0.0 {
+                    continue;
+                }
+                out.indices.push(idx);
+                out.values.push(v);
             }
-            out.indices.push(idx);
-            out.values.push(v);
+            out.finish_row();
         }
+        return;
+    }
+
+    // Parallel path: each row writes into pre-sized slots in row_idx /
+    // row_val (capacity k per row). row_lens tracks the actual count
+    // after post_relu drops. A serial compaction pass then extends the
+    // CSR in row order.
+    use rayon::prelude::*;
+
+    let mut row_idx: Vec<u32> = vec![0; tile_rows * k];
+    let mut row_val: Vec<f32> = vec![0.0; tile_rows * k];
+    let mut row_lens: Vec<u32> = vec![0; tile_rows];
+
+    pre_acts
+        .par_chunks_mut(d_sae)
+        .zip(row_idx.par_chunks_mut(k.max(1)))
+        .zip(row_val.par_chunks_mut(k.max(1)))
+        .zip(row_lens.par_iter_mut())
+        .for_each_init(
+            TopKScratch::new,
+            |thread_scratch, (((row, idx_slot), val_slot), len)| {
+                if let Some(scales) = rescale {
+                    for (v, &s) in row.iter_mut().zip(scales.iter()) {
+                        *v *= s;
+                    }
+                }
+                topk::select_into(row, k, thread_scratch);
+                let mut n: u32 = 0;
+                for &(idx, val) in thread_scratch.indexed.iter() {
+                    let v = if post_relu { val.max(0.0) } else { val };
+                    if post_relu && v == 0.0 {
+                        continue;
+                    }
+                    idx_slot[n as usize] = idx;
+                    val_slot[n as usize] = v;
+                    n += 1;
+                }
+                *len = n;
+            },
+        );
+
+    let total: usize = row_lens.iter().map(|&n| n as usize).sum();
+    out.indices.reserve(total);
+    out.values.reserve(total);
+    for (r, &len) in row_lens.iter().enumerate() {
+        let n = len as usize;
+        let start = r * k;
+        out.indices.extend_from_slice(&row_idx[start..start + n]);
+        out.values.extend_from_slice(&row_val[start..start + n]);
         out.finish_row();
     }
 }

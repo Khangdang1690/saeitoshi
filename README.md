@@ -88,21 +88,19 @@ one release in case you need to bisect a regression.
 End-to-end `sae.encode` on the same i9-13900HX, TopK k=32, vs sae_lens
 6.44 (run `python benches/bench_vs_saelens.py` to reproduce):
 
-| d_in × d_sae | B | saeitoshi v0 | saeitoshi v0.1 | sae_lens (MKL) |
-|---|---|---|---|---|
-| 512 × 8192   | 4096 | ~1800 ms | **~1640 ms** | ~52 ms  |
-| 768 × 12288  | 4096 | ~3100 ms | **~2750 ms** | ~133 ms |
-| 2048 × 16384 | 4096 | ~5900 ms | **~3920 ms** | ~395 ms |
-| 2048 × 16384 |  512 | ~735 ms  | **~466 ms**  | ~57 ms  |
+| d_in × d_sae | B | saeitoshi v0 | saeitoshi v0.1 | saeitoshi v0.2 | sae_lens (MKL) |
+|---|---|---|---|---|---|
+| 512 × 8192   | 4096 | ~1800 ms | ~1640 ms | **~62 ms**  | ~73 ms  |
+| 768 × 12288  | 4096 | ~3100 ms | ~2750 ms | **~158 ms** | ~152 ms |
+| 2048 × 16384 | 4096 | ~5900 ms | ~3920 ms | **~438 ms** | ~467 ms |
+| 2048 × 16384 |  512 | ~735 ms  | ~466 ms  | **~47 ms**  | ~70 ms  |
 
-The matmul kernel itself crosses MKL on this box — the criterion bench
-in [crates/saeitoshi/benches/encoder.rs](crates/saeitoshi/benches/encoder.rs)
-runs the 2048×16384, B=512 matmul in ~40 ms vs MKL's ~48 ms (same
-shape, derived from the 387 ms / 4096 ratio). The end-to-end numbers
-above are dominated by the scalar TopK selection (O(n log n) sort
-across d_sae per batch row), now the leading bottleneck — flagged for
-v0.2. Honesty matters: kernel parity with MKL is real; end-to-end win
-is modest until TopK is fixed too.
+v0.2 closes the TopK gap: a heap-based partial sort (O(n log k) vs the
+v0 sort's O(n log n)) with branchless integer-key comparison, plus
+row-level rayon parallelism in the sparsifier. Isolated TopK at
+d_sae=16384, k=32 dropped from ~853 µs to ~16 µs per row (~52×). The
+heap kernel is now the default; flip back with `SAEITOSHI_TOPK=legacy`
+for one release if you need to bisect.
 
 What perf-v2 actually changes:
 
@@ -120,7 +118,8 @@ What perf-v2 actually changes:
 
 Knobs:
 
-- `SAEITOSHI_BACKEND=legacy` — force the v0 per-dot-product kernel.
+- `SAEITOSHI_BACKEND=legacy` — force the v0 per-dot-product matmul kernel.
+- `SAEITOSHI_TOPK=legacy` — force the v0 full-sort TopK selection.
 - `SAEITOSHI_GEMM_TILE=MC,NC,KC` — override the M-block grouping (MC).
 - `SAEITOSHI_NO_PARALLEL=1` — disable rayon parallelism entirely.
 

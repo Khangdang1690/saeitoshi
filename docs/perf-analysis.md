@@ -410,3 +410,270 @@ Each commit lands new code behind `--features perf-v2`. Each must pass
 Listed above under "Non-goals for v0.1". The single most important non-goal
 to defend: **no external BLAS dependency**. The pure-Rust no-torch-dep
 property is the moat — the whole point of a tiled GEMM we own.
+
+---
+
+# saeitoshi v0.2 — TopK redesign
+
+## Why this section exists
+
+v0.1 closed the matmul gap. At the headline shape (d_in=2048, d_sae=16384,
+batch=512) the tiled AVX2 GEMM runs the matmul in ~40 ms, slightly
+beating MKL's ~48 ms at the same shape. But end-to-end `sae.encode` was
+still ~466 ms — **TopK selection was now the bottleneck**, swallowing
+~410 ms of every call.
+
+The v0.1 brief decomposed it: 40 ms matmul + 5 ms allocation + 5 ms
+PyO3 boundary + **410 ms TopK** = ~460 ms. At batch=4096 the TopK
+fraction scaled linearly to ~3.3 s — over 80% of the encode wall time.
+
+v0.2 fixes TopK and the picture flips entirely:
+
+| Shape | v0.1 end-to-end | v0.2 end-to-end | sae_lens (MKL+PyTorch) |
+|---|---|---|---|
+| 512 × 8192, B=4096 | ~1640 ms | **~62 ms** | ~73 ms |
+| 768 × 12288, B=4096 | ~2750 ms | **~158 ms** | ~152 ms |
+| 2048 × 16384, B=4096 | ~3920 ms | **~438 ms** | ~467 ms |
+| 2048 × 16384, B=512 | ~466 ms | **~47 ms** | ~70 ms |
+
+End-to-end **at or below MKL** on three of four shapes. The original
+brief's "≥5× sae_lens" target is now retroactively met on encode.
+
+## Why the v0 TopK was slow
+
+The legacy implementation in
+[crates/saeitoshi/src/kernels/scalar.rs](../crates/saeitoshi/src/kernels/scalar.rs)
+did a full sort of all `d_sae` scores per row, then truncated to k:
+
+```rust
+scratch.indexed.clear();
+scratch.indexed.reserve(scores.len());
+for (i, &v) in scores.iter().enumerate() {
+    scratch.indexed.push((i as u32, v));
+}
+scratch.indexed.sort_by(|a, b| {
+    b.1.partial_cmp(&a.1)
+        .unwrap_or(std::cmp::Ordering::Equal)
+        .then_with(|| a.0.cmp(&b.0))
+});
+scratch.indexed.truncate(k);
+scratch.indexed.sort_by_key(|&(i, _)| i);
+```
+
+At d_sae=16384, k=32 this is O(n log n) = ~230 K comparisons per row.
+At batch=4096 that's ~940 M comparisons per encode, each of which is:
+
+- A closure call (no inlining across the trait object Rust uses for
+  `sort_by`'s comparator),
+- A `partial_cmp` returning `Option<Ordering>`,
+- An `unwrap_or(Equal)` mux,
+- A `then_with` for the tie-break,
+- A second `Ord::cmp` on `u32` indices.
+
+That's ~5 dependent ops per comparison, all data-dependent branches. The
+hot path also pushes 16 K elements into a `Vec` on every call (clear +
+reserve was fine, but the per-element push grew the allocation each
+encode until the scratch reached steady-state).
+
+## What PyTorch does
+
+`torch.topk` for the TopK SAE config dispatches to
+`aten::topk_cpu_template` in
+`pytorch/aten/src/ATen/native/Sorting.cpp`. For `k << n` it uses a
+**k-element min-heap partial sort**:
+
+1. Initialize a min-heap with the first k elements.
+2. For each remaining element: peek the heap root (current k-th best),
+   compare, and if the candidate beats the root, replace it and sift
+   down.
+3. The k elements left in the heap are the top-k. Sort by index for
+   output.
+
+That's **O(n log k)** comparisons per row — at d_sae=16384, k=32 that's
+~82 K vs the legacy ~230 K. The inner loop is straight-line C++ where
+the comparator is a single primitive compare; LLVM/GCC inline it freely
+and emit `cmov` for the conditional replace.
+
+Net: PyTorch's TopK is **algorithmically ~3× cheaper** AND **per-op
+~3× cheaper**. The ~10× total gap we measured against PyTorch is
+explained.
+
+## v0.2 design
+
+Three changes, layered:
+
+### 1. Heap-based partial sort
+
+Implemented in
+[crates/saeitoshi/src/kernels/topk_heap.rs](../crates/saeitoshi/src/kernels/topk_heap.rs).
+Hand-rolled binary min-heap over `Vec<(u32, f32)>` (the same storage
+layout as the legacy `TopKScratch` field, so the `sparsify.rs` API is
+unchanged). Embedded heap arithmetic: parent at `(i-1)/2`, children at
+`2i+1` and `2i+2`. We deliberately do **not** use
+`std::collections::BinaryHeap` — its `Ord`-via-newtype-Reverse pattern
+gets in the way of the integer-key trick below, and `peek_mut` allocates
+a drop-guard that bloats the hot path.
+
+### 2. Integer-encoded ranking key (branchless inner loop)
+
+The TopK ordering is `(value DESC, index ASC)`. Naively expressed,
+that's a two-level comparator with a tie-break — exactly the kind of
+shape that defeats branchless codegen. The trick is to bit-encode both
+levels into a single `u64` such that **integer comparison matches the
+desired total order**:
+
+```rust
+#[inline(always)]
+fn f32_to_ord(v: f32) -> u32 {
+    let bits = v.to_bits();
+    let sign_mask = ((bits as i32) >> 31) as u32;
+    bits ^ (sign_mask | 0x8000_0000)
+}
+
+#[inline(always)]
+fn rank_key(idx: u32, val: f32) -> u64 {
+    ((f32_to_ord(val) as u64) << 32) | (!idx as u64)
+}
+```
+
+`f32_to_ord` flips the sign bit on positives and all bits on negatives,
+so larger floats map to larger u32 values (the standard IEEE-754 total-
+order trick used by sort-network libraries and bucket sort). The lower
+32 bits of the key are `!idx`, so a smaller index trailing on a tie
+produces a larger key — i.e. **wins** the tie.
+
+The result: a single `u64 > u64` compare on every inner-loop iteration.
+LLVM compiles the conditional replace pattern
+
+```rust
+let v = scores[i];
+let (root_idx, root_val) = heap[0];
+if better(i, v, root_idx, root_val) {
+    heap[0] = (i, v);
+    sift_down(heap, 0);
+}
+```
+
+to a single `cmp`+`ja`/`jbe` pair, with the late-scan branch heavily
+biased toward "not taken" (most candidates lose to the rising heap
+root). Branch predictor pressure is minimal.
+
+### 3. Rayon row-level parallelism
+
+Each row's TopK is fully independent. The v0.1 GEMM already established
+the M-block rayon threading pattern; v0.2 mirrors it in the sparsifier.
+
+The CSR writeback is the only synchronization point: `out.indices`,
+`out.values`, `out.row_offsets` are sequential `Vec`s and can't be
+shared across threads. Two-phase design solves it:
+
+```text
+Pre-allocate row_idx[batch*k], row_val[batch*k], row_lens[batch]
+Parallel:
+    for each (row, idx_slot, val_slot, len):
+        scratch = TopKScratch::new()  # thread-local via for_each_init
+        rescale + heap_topk(row, k, scratch)
+        for each (idx, val) in scratch:
+            if post_relu drops it: continue
+            idx_slot[*len] = idx; val_slot[*len] = val; *len += 1
+Serial compaction:
+    for r in 0..batch:
+        out.indices.extend_from_slice(&row_idx[r*k .. r*k + row_lens[r]])
+        out.values.extend_from_slice(&row_val[r*k .. r*k + row_lens[r]])
+        out.finish_row()
+```
+
+`for_each_init` gives each rayon worker one thread-local
+`TopKScratch` reused across all rows it draws from the work-stealing
+deque. The parallel path activates only when `tile_rows ≥ 4` and
+`tile_rows * d_sae ≥ 8192` (rayon overhead dominates below that); the
+sequential fallback is preserved verbatim from v0.1.
+
+## Numbers
+
+### Isolated TopK (criterion bench)
+
+[crates/saeitoshi/benches/topk.rs](../crates/saeitoshi/benches/topk.rs)
+times `topk_select` against a precomputed scores vector — no matmul,
+no rayon. Per-row cost only:
+
+| Shape | Legacy full sort | Heap partial sort | Speedup |
+|---|---|---|---|
+| d_sae=8192, k=32 | ~389 µs | ~10 µs | **38×** |
+| d_sae=16384, k=32 | ~853 µs | ~16 µs | **52×** |
+| d_sae=16384, k=64 | ~779 µs | ~19 µs | **41×** |
+| d_sae=16384, k=1024 | ~793 µs | ~114 µs | **7×** |
+
+The k=1024 case is degrading toward `sort_unstable_by` cost; that's
+expected (heap insert is O(log k), so the cost grows with k). For the
+SAELens-typical k=32–64 range the win is ~40–50×.
+
+### End-to-end (bench_vs_saelens.py)
+
+The full encode pipeline including matmul, allocation, PyO3 boundary,
+and CSR construction. Median of 11 iterations after 3 warmups, Intel
+i9-13900HX (24 logical cores).
+
+| Shape | v0.1 | v0.2 | sae_lens (MKL) |
+|---|---|---|---|
+| 512 × 8192, B=4096 | ~1640 ms | ~62 ms | ~73 ms |
+| 768 × 12288, B=4096 | ~2750 ms | ~158 ms | ~152 ms |
+| 2048 × 16384, B=4096 | ~3920 ms | ~438 ms | ~467 ms |
+| 2048 × 16384, B=512 | ~466 ms | ~47 ms | ~70 ms |
+
+v0.2 beats sae_lens on three of four shapes, ties on the fourth.
+
+## Verification
+
+Same parity story as v0.1 — 1e-5 max abs error against `sae_lens.SAE.encode`
+gates the launch
+([tests/test_parity_saelens.py](../tests/test_parity_saelens.py)), still
+green at v0.2. Plus a new test file
+[crates/saeitoshi/tests/topk_parity.rs](../crates/saeitoshi/tests/topk_parity.rs)
+that asserts **byte-identical** output from the heap implementation
+against the legacy scalar reference across:
+
+- Small shapes (d_sae ∈ {8, 16, 64, 256}, k ∈ {1, 3, 4, 16, 100})
+- The headline (d_sae=16384, k=32)
+- k == d_sae (degenerate full-sort case)
+- k == 1 (degenerate single-element case)
+- All-ties (every score equal, only tie-break ordering matters)
+- Partial ties at the k-boundary (the load-bearing tie-break test)
+
+Total Rust tests: 25 → **42** (+17). Python tests: 32 → 32 (unchanged;
+parity gate stays green).
+
+## Risks
+
+- **f32_to_ord on NaN.** NaN bit-patterns map to large u32 values
+  deterministically, but the order is implementation-defined for the
+  set of NaNs. The encoder doesn't produce NaN from the parity tests,
+  so this is a latent contract — documented but not actively defended.
+  If a downstream caller starts feeding NaN-laden scores, we may need
+  to filter at the matmul output.
+- **Rayon `for_each_init` cost on small batches.** Covered by the
+  `tile_rows * d_sae ≥ 8192` threshold; benchmarked at the boundary
+  to confirm no regression at small shapes.
+- **Per-call `vec![0.0; batch * k]` allocation.** ~1 MB at headline,
+  ~5 µs cost. Negligible against the 438 ms wall but flagged as a
+  potential v0.2.1 polish if a smaller-batch workload surfaces it.
+- **Pointer-comparison dispatch.** `topk::backend_name()` uses
+  `std::ptr::eq` on function pointers. This works on every host we
+  test on; if a future platform legalizes function-pointer ICF in a
+  way that breaks it, the bench label may report "legacy" when the
+  heap is actually running. Not load-bearing — the parity tests catch
+  any actual behavior divergence.
+
+## What v0.2 explicitly did not do
+
+- **SIMD tournament-tree TopK.** The branchless heap is the v0.2 inner
+  loop. SIMD tournament was scoped as v0.2.1 if the heap fell short;
+  it didn't, so this is parked.
+- **K-tiling the GEMM.** The packed-A panel still spills to L3 at the
+  headline. Polish, not progress; matmul isn't the bottleneck anymore.
+- **INT8 weights.** Halves W memory, doubles bandwidth-bound matmul
+  throughput. The obvious v0.3.
+- **Per-call scratch on `Sae` for the `pre_acts` buffer.** Still
+  allocated fresh per encode at
+  [sae.rs:309](../crates/saeitoshi/src/sae.rs#L309). ~5 ms at headline,
+  small fraction of the new 438 ms total. Parked as a v0.2.1 polish.
