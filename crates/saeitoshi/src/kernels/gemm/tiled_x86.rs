@@ -363,7 +363,7 @@ fn encode_f32_avx2_tiled(x: &[f32], enc: &EncoderWeights, pre_acts: &mut [f32], 
         // across multiple microkernel invocations. At d_sae = 16384 we
         // generate ~32 tasks for 24 threads, plenty of work-stealing slack
         // for Raptor Lake's heterogeneous P/E cores.
-        let panels_per_m_block = (super::DEFAULT_M_C / m_r).max(1);
+        let panels_per_m_block = (super::m_c_runtime() / m_r).max(1);
         let n_m_blocks = n_full_panels.div_ceil(panels_per_m_block);
         let pre_acts_ptr = AtomicPtr::new(pre_acts.as_mut_ptr());
 
@@ -435,7 +435,7 @@ fn encode_f32_avx512_tiled(x: &[f32], enc: &EncoderWeights, pre_acts: &mut [f32]
     let has_partial_panel = n_panels > n_full_panels;
 
     if crate::kernels::encoder::parallel_enabled() && n_full_panels > 1 {
-        let panels_per_m_block = (super::DEFAULT_M_C / m_r).max(1);
+        let panels_per_m_block = (super::m_c_runtime() / m_r).max(1);
         let n_m_blocks = n_full_panels.div_ceil(panels_per_m_block);
         let pre_acts_ptr = AtomicPtr::new(pre_acts.as_mut_ptr());
 

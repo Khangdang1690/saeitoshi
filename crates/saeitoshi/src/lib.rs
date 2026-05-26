@@ -40,4 +40,7 @@ pub mod backends {
 
     #[cfg(all(feature = "perf-v2", target_arch = "x86_64"))]
     pub use crate::kernels::gemm::tiled_x86::{AVX2_TILED, AVX512_TILED};
+
+    #[cfg(all(feature = "perf-v2", target_arch = "aarch64"))]
+    pub use crate::kernels::gemm::tiled_neon::NEON_TILED;
 }

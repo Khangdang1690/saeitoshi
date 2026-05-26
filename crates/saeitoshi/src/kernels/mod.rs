@@ -57,6 +57,12 @@ pub fn select_backend() -> &'static Backend {
                 return &gemm::tiled_x86::AVX2_TILED;
             }
         }
+        #[cfg(target_arch = "aarch64")]
+        {
+            if std::arch::is_aarch64_feature_detected!("neon") {
+                return &gemm::tiled_neon::NEON_TILED;
+            }
+        }
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -94,6 +100,12 @@ pub fn backend_m_r(backend: &Backend) -> Option<usize> {
         if std::ptr::eq(backend, &gemm::tiled_x86::AVX2_TILED)
             || std::ptr::eq(backend, &gemm::tiled_x86::AVX512_TILED)
         {
+            return Some(gemm::DEFAULT_M_R);
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        if std::ptr::eq(backend, &gemm::tiled_neon::NEON_TILED) {
             return Some(gemm::DEFAULT_M_R);
         }
     }

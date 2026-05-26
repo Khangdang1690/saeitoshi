@@ -40,6 +40,34 @@ pub mod tiled_scalar;
 #[cfg(target_arch = "x86_64")]
 pub mod tiled_x86;
 
+#[cfg(target_arch = "aarch64")]
+pub mod tiled_neon;
+
+/// Resolve the M-block grouping size from `SAEITOSHI_GEMM_TILE=MC,NC,KC`,
+/// falling back to [`DEFAULT_M_C`].
+///
+/// Only `MC` is consumed today — `NC` and `KC` are parsed but ignored
+/// until the K-tiled variant lands. The env var is parsed once per
+/// process at first call; later changes are not picked up.
+///
+/// Use it from the tiled backends to compute `panels_per_m_block`. For
+/// `DEFAULT_M_C = 512, m_r = 16` this gives 32 panels per rayon task on
+/// the dev box; an override like `SAEITOSHI_GEMM_TILE=256,8192,512` would
+/// halve the task size (useful on smaller-L2 CPUs).
+pub fn m_c_runtime() -> usize {
+    use std::sync::OnceLock;
+    static CACHED: OnceLock<usize> = OnceLock::new();
+    *CACHED.get_or_init(|| match std::env::var("SAEITOSHI_GEMM_TILE") {
+        Ok(spec) => spec
+            .split(',')
+            .next()
+            .and_then(|s| s.parse::<usize>().ok())
+            .filter(|&v| v > 0)
+            .unwrap_or(DEFAULT_M_C),
+        Err(_) => DEFAULT_M_C,
+    })
+}
+
 /// Default register-tile row count (M_R).
 ///
 /// Tuned for AVX2: M_R = 16 = 2 ymm registers wide. Same value works for
