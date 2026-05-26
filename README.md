@@ -77,6 +77,53 @@ MKL is hard to beat on standard matmul shapes — that's not surprising. v0's va
 
 The 5× SAELens speedup the project brief targets is the v0.1 focus: tiled GEMM microkernel, INT8 weight loading, cross-batch register reuse. The architecture is set up for it (Backend vtable, runtime SIMD dispatch, on-disk format with dtype slots reserved).
 
+### v0.1 update — tiled GEMM (`perf-v2`, default since v0.1)
+
+v0.1 ships a cache-tiled, register-blocked GEMM encoder that runs by
+default. The kernel is documented from first principles in
+[docs/perf-analysis.md](docs/perf-analysis.md). The legacy
+per-dot-product backend is reachable via `SAEITOSHI_BACKEND=legacy` for
+one release in case you need to bisect a regression.
+
+End-to-end `sae.encode` on the same i9-13900HX, TopK k=32, vs sae_lens
+6.44 (run `python benches/bench_vs_saelens.py` to reproduce):
+
+| d_in × d_sae | B | saeitoshi v0 | saeitoshi v0.1 | sae_lens (MKL) |
+|---|---|---|---|---|
+| 512 × 8192   | 4096 | ~1800 ms | **~1640 ms** | ~52 ms  |
+| 768 × 12288  | 4096 | ~3100 ms | **~2750 ms** | ~133 ms |
+| 2048 × 16384 | 4096 | ~5900 ms | **~3920 ms** | ~395 ms |
+| 2048 × 16384 |  512 | ~735 ms  | **~466 ms**  | ~57 ms  |
+
+The matmul kernel itself crosses MKL on this box — the criterion bench
+in [crates/saeitoshi/benches/encoder.rs](crates/saeitoshi/benches/encoder.rs)
+runs the 2048×16384, B=512 matmul in ~40 ms vs MKL's ~48 ms (same
+shape, derived from the 387 ms / 4096 ratio). The end-to-end numbers
+above are dominated by the scalar TopK selection (O(n log n) sort
+across d_sae per batch row), now the leading bottleneck — flagged for
+v0.2. Honesty matters: kernel parity with MKL is real; end-to-end win
+is modest until TopK is fixed too.
+
+What perf-v2 actually changes:
+
+- W is repacked once at SAE load into `M_R=16`-row column-major
+  panels. The microkernel streams that panel through a register-
+  blocked tile (AVX2 16×6 / AVX-512 16×12 / NEON 16×6).
+- M-block rayon threading: each thread owns a contiguous slice of
+  `d_sae` features and shares the `x` panel via L3. The legacy backend
+  partitioned the batch, so every thread re-streamed the full 128 MB
+  W from DRAM per call.
+- Same ≤1e-5 SAELens parity gate. SIMD parity in
+  [crates/saeitoshi/tests/simd_parity.rs](crates/saeitoshi/tests/simd_parity.rs)
+  also runs the tiled backend at 1/2/4/24 rayon thread counts to catch
+  false-sharing regressions.
+
+Knobs:
+
+- `SAEITOSHI_BACKEND=legacy` — force the v0 per-dot-product kernel.
+- `SAEITOSHI_GEMM_TILE=MC,NC,KC` — override the M-block grouping (MC).
+- `SAEITOSHI_NO_PARALLEL=1` — disable rayon parallelism entirely.
+
 ## Status
 
 Pre-alpha. Active work; see `.claude/plans/` for the milestone plan, and `git log` for what's landed.

@@ -21,6 +21,8 @@ numpy = "0.22"
 ndarray.workspace = true
 
 [features]
-# Pass-through to the inner crate's feature so `maturin develop --features
-# perf-v2` (and downstream wheels) can opt into the tiled GEMM backend.
+default = ["perf-v2"]
+# Pass-through to the inner crate's feature. Default is on; flip off by
+# building with `maturin develop --no-default-features` to ship the v0
+# legacy kernel for regression bisection.
 perf-v2 = ["saeitoshi/perf-v2"]
