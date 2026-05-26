@@ -34,15 +34,17 @@ unsafe fn encode_f32_avx2_inner(
     debug_assert_eq!(x.len(), batch * d_in);
     debug_assert_eq!(pre_acts.len(), batch * d_sae);
 
-    for b in 0..batch {
-        let x_row = &x[b * d_in..(b + 1) * d_in];
-        let pre_row = &mut pre_acts[b * d_sae..(b + 1) * d_sae];
-        for f in 0..d_sae {
-            let w_row = &enc.w_enc[f * d_in..(f + 1) * d_in];
+    // Outer-feature loop: W_enc streams once per call; x stays in cache;
+    // pre_acts writes are strided per batch row but small. See scalar.rs
+    // for the rationale.
+    for f in 0..d_sae {
+        let w_row = &enc.w_enc[f * d_in..(f + 1) * d_in];
+        let bias = enc.b_enc[f];
+        for b in 0..batch {
+            let x_row = &x[b * d_in..(b + 1) * d_in];
 
             let mut acc = _mm256_setzero_ps();
             let mut i = 0;
-            // 8 floats per AVX2 register.
             while i + 8 <= d_in {
                 let xv = _mm256_loadu_ps(x_row.as_ptr().add(i));
                 let wv = _mm256_loadu_ps(w_row.as_ptr().add(i));
@@ -50,13 +52,12 @@ unsafe fn encode_f32_avx2_inner(
                 i += 8;
             }
 
-            // Horizontal sum, then add the bias + scalar tail.
             let mut sum = horizontal_sum_avx2(acc);
             while i < d_in {
                 sum += x_row[i] * w_row[i];
                 i += 1;
             }
-            pre_row[f] = sum + enc.b_enc[f];
+            pre_acts[b * d_sae + f] = sum + bias;
         }
     }
 }
@@ -97,15 +98,14 @@ unsafe fn encode_f32_avx512_inner(
     debug_assert_eq!(x.len(), batch * d_in);
     debug_assert_eq!(pre_acts.len(), batch * d_sae);
 
-    for b in 0..batch {
-        let x_row = &x[b * d_in..(b + 1) * d_in];
-        let pre_row = &mut pre_acts[b * d_sae..(b + 1) * d_sae];
-        for f in 0..d_sae {
-            let w_row = &enc.w_enc[f * d_in..(f + 1) * d_in];
+    for f in 0..d_sae {
+        let w_row = &enc.w_enc[f * d_in..(f + 1) * d_in];
+        let bias = enc.b_enc[f];
+        for b in 0..batch {
+            let x_row = &x[b * d_in..(b + 1) * d_in];
 
             let mut acc = _mm512_setzero_ps();
             let mut i = 0;
-            // 16 floats per AVX-512 register.
             while i + 16 <= d_in {
                 let xv = _mm512_loadu_ps(x_row.as_ptr().add(i));
                 let wv = _mm512_loadu_ps(w_row.as_ptr().add(i));
@@ -118,7 +118,7 @@ unsafe fn encode_f32_avx512_inner(
                 sum += x_row[i] * w_row[i];
                 i += 1;
             }
-            pre_row[f] = sum + enc.b_enc[f];
+            pre_acts[b * d_sae + f] = sum + bias;
         }
     }
 }

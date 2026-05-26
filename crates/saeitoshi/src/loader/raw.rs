@@ -18,10 +18,10 @@ pub fn load_safetensors(path: &Path, cfg: SaeConfig) -> Result<Sae> {
     let st = SafetensorsFile::open(path)?;
     let view = st.view()?;
 
-    let (w_enc, w_enc_shape) = read_f32_tensor(&view, "W_enc")
-        .or_else(|_| read_f32_tensor(&view, "encoder.weight"))?;
-    let (b_enc, b_enc_shape) = read_f32_tensor(&view, "b_enc")
-        .or_else(|_| read_f32_tensor(&view, "encoder.bias"))?;
+    let (w_enc, w_enc_shape) =
+        read_f32_tensor(&view, "W_enc").or_else(|_| read_f32_tensor(&view, "encoder.weight"))?;
+    let (b_enc, b_enc_shape) =
+        read_f32_tensor(&view, "b_enc").or_else(|_| read_f32_tensor(&view, "encoder.bias"))?;
     let (w_dec, w_dec_shape) = read_f32_tensor(&view, "W_dec")?;
     let (b_dec, b_dec_shape) = read_f32_tensor(&view, "b_dec")?;
 
@@ -66,9 +66,10 @@ pub fn load_safetensors(path: &Path, cfg: SaeConfig) -> Result<Sae> {
     let sparsifier = match cfg.architecture {
         Architecture::Standard => Sparsifier::Relu,
         Architecture::Topk => Sparsifier::TopK {
-            k: cfg.k.ok_or_else(|| {
-                SaeError::invalid(path, "topk arch requires `k` in SaeConfig")
-            })? as u32,
+            k: cfg
+                .k
+                .ok_or_else(|| SaeError::invalid(path, "topk arch requires `k` in SaeConfig"))?
+                as u32,
             post_relu: false,
             rescale: None,
         },
@@ -92,7 +93,17 @@ pub fn load_safetensors(path: &Path, cfg: SaeConfig) -> Result<Sae> {
         }
     };
 
-    let enc = EncoderWeights { w_enc, b_enc, d_in, d_sae };
-    let dec = DecoderWeights { w_dec, b_dec, d_in, d_sae };
+    let enc = EncoderWeights {
+        w_enc,
+        b_enc,
+        d_in,
+        d_sae,
+    };
+    let dec = DecoderWeights {
+        w_dec,
+        b_dec,
+        d_in,
+        d_sae,
+    };
     Sae::from_parts(cfg, enc, dec, sparsifier)
 }

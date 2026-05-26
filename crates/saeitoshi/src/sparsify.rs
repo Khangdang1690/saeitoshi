@@ -48,7 +48,11 @@ impl Sparsifier {
         scratch: &mut TopKScratch,
     ) {
         match self {
-            Sparsifier::TopK { k, post_relu, rescale } => {
+            Sparsifier::TopK {
+                k,
+                post_relu,
+                rescale,
+            } => {
                 apply_topk(
                     pre_acts,
                     tile_rows,

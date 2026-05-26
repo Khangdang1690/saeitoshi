@@ -96,7 +96,11 @@ pub fn write(sae: &Sae, path: &Path) -> Result<()> {
     );
 
     let kind = match sae.sparsifier() {
-        Sparsifier::TopK { k, post_relu, rescale } => {
+        Sparsifier::TopK {
+            k,
+            post_relu,
+            rescale,
+        } => {
             if let Some(r) = rescale {
                 push(
                     &mut entries,
@@ -125,7 +129,11 @@ pub fn write(sae: &Sae, path: &Path) -> Result<()> {
         Sparsifier::Relu => SparsifierKind::Relu,
     };
 
-    let header = SitHeader { config: cfg, sparsifier: kind, tensors: entries };
+    let header = SitHeader {
+        config: cfg,
+        sparsifier: kind,
+        tensors: entries,
+    };
     let json = serde_json::to_vec(&header)?;
     let header_len = json.len() as u32;
 
@@ -216,13 +224,21 @@ pub fn read(path: &Path) -> Result<Sae> {
     let b_dec = read_tensor("b_dec")?;
 
     let sparsifier = match header.sparsifier {
-        SparsifierKind::Topk { k, post_relu, has_rescale } => {
+        SparsifierKind::Topk {
+            k,
+            post_relu,
+            has_rescale,
+        } => {
             let rescale = if has_rescale {
                 Some(read_tensor("rescale")?.into_vec())
             } else {
                 None
             };
-            Sparsifier::TopK { k, post_relu, rescale }
+            Sparsifier::TopK {
+                k,
+                post_relu,
+                rescale,
+            }
         }
         SparsifierKind::Jumprelu => {
             let thresholds = read_tensor("threshold")?.into_vec();
@@ -231,8 +247,18 @@ pub fn read(path: &Path) -> Result<Sae> {
         SparsifierKind::Relu => Sparsifier::Relu,
     };
 
-    let enc = EncoderWeights { w_enc, b_enc, d_in, d_sae };
-    let dec = DecoderWeights { w_dec, b_dec, d_in, d_sae };
+    let enc = EncoderWeights {
+        w_enc,
+        b_enc,
+        d_in,
+        d_sae,
+    };
+    let dec = DecoderWeights {
+        w_dec,
+        b_dec,
+        d_in,
+        d_sae,
+    };
 
     Sae::from_parts(header.config, enc, dec, sparsifier)
 }

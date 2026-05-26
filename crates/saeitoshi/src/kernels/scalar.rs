@@ -12,12 +12,16 @@ use super::Backend;
 /// Encoder: `pre_acts[b, f] = b_enc[f] + sum_i x[b, i] * W_enc[f, i]`.
 ///
 /// `x` is `[batch * d_in]`, `pre_acts` is `[batch * d_sae]`, both row-major.
-/// `W_enc` is stored as `[d_sae, d_in]` row-major so the inner i-loop strides
-/// W_enc contiguously per output feature f.
+/// `W_enc` is stored as `[d_sae, d_in]` row-major.
+///
+/// Loop order: outer over features `f`, inner over batches `b`, innermost
+/// over `i`. This streams `W_enc` (the dominant memory user — 128 MB for
+/// `d_in=2048, d_sae=16384`) once across the whole call rather than once
+/// per batch row. `x` stays hot in L2, `pre_acts` writes are scattered but
+/// small.
 //
 // Hot kernel — keep integer-indexed loops so the SIMD replacement in M3
-// can drop in with the same shape. Iterator chains here hurt readability
-// and don't help the compiler vectorize the scalar path.
+// can drop in with the same shape.
 #[allow(clippy::needless_range_loop)]
 pub fn encode_f32(x: &[f32], enc: &EncoderWeights, pre_acts: &mut [f32], batch: usize) {
     let d_in = enc.d_in;
@@ -27,16 +31,16 @@ pub fn encode_f32(x: &[f32], enc: &EncoderWeights, pre_acts: &mut [f32], batch: 
     debug_assert_eq!(enc.w_enc.len(), d_sae * d_in);
     debug_assert_eq!(enc.b_enc.len(), d_sae);
 
-    for b in 0..batch {
-        let x_row = &x[b * d_in..(b + 1) * d_in];
-        let pre_row = &mut pre_acts[b * d_sae..(b + 1) * d_sae];
-        for f in 0..d_sae {
-            let w_row = &enc.w_enc[f * d_in..(f + 1) * d_in];
-            let mut acc = enc.b_enc[f];
+    for f in 0..d_sae {
+        let w_row = &enc.w_enc[f * d_in..(f + 1) * d_in];
+        let bias = enc.b_enc[f];
+        for b in 0..batch {
+            let x_row = &x[b * d_in..(b + 1) * d_in];
+            let mut acc = bias;
             for i in 0..d_in {
                 acc += x_row[i] * w_row[i];
             }
-            pre_row[f] = acc;
+            pre_acts[b * d_sae + f] = acc;
         }
     }
 }

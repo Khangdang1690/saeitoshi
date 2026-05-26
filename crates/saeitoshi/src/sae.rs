@@ -157,7 +157,13 @@ impl Sae {
             });
         }
         let backend = select_backend();
-        Ok(Self { cfg, enc, dec, sparsifier, backend })
+        Ok(Self {
+            cfg,
+            enc,
+            dec,
+            sparsifier,
+            backend,
+        })
     }
 
     /// Override the auto-detected backend (test + benchmark hook).
@@ -217,12 +223,7 @@ impl Sae {
         {
             x_buf.extend_from_slice(x);
             if self.cfg.normalize_activations != crate::config::NormalizeMode::None {
-                normalize::apply_in_place(
-                    self.cfg.normalize_activations,
-                    &mut x_buf,
-                    batch,
-                    d_in,
-                );
+                normalize::apply_in_place(self.cfg.normalize_activations, &mut x_buf, batch, d_in);
             }
             if self.cfg.apply_b_dec_to_input {
                 for b in 0..batch {
@@ -241,7 +242,8 @@ impl Sae {
         encoder::encode_f32(self.backend, x_ref, &self.enc, &mut pre_acts, batch);
 
         let mut scratch = TopKScratch::new();
-        self.sparsifier.apply(&mut pre_acts, batch, d_sae, out, &mut scratch);
+        self.sparsifier
+            .apply(&mut pre_acts, batch, d_sae, out, &mut scratch);
 
         Ok(())
     }

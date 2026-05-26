@@ -65,10 +65,10 @@ pub fn load_dir(dir: &Path) -> Result<Sae> {
 
     // sparsify tensor names. Fall back to SAELens names if a checkpoint uses
     // them — be forgiving.
-    let (w_enc, w_enc_shape) = read_f32_tensor(&view, "encoder.weight")
-        .or_else(|_| read_f32_tensor(&view, "W_enc"))?;
-    let (b_enc, b_enc_shape) = read_f32_tensor(&view, "encoder.bias")
-        .or_else(|_| read_f32_tensor(&view, "b_enc"))?;
+    let (w_enc, w_enc_shape) =
+        read_f32_tensor(&view, "encoder.weight").or_else(|_| read_f32_tensor(&view, "W_enc"))?;
+    let (b_enc, b_enc_shape) =
+        read_f32_tensor(&view, "encoder.bias").or_else(|_| read_f32_tensor(&view, "b_enc"))?;
     let (w_dec, w_dec_shape) = read_f32_tensor(&view, "W_dec")?;
     let (b_dec, b_dec_shape) = read_f32_tensor(&view, "b_dec")?;
 
@@ -135,7 +135,11 @@ pub fn load_dir(dir: &Path) -> Result<Sae> {
 }
 
 fn pick_weights_file(dir: &Path) -> Result<std::path::PathBuf> {
-    for name in ["sae.safetensors", "sae_weights.safetensors", "weights.safetensors"] {
+    for name in [
+        "sae.safetensors",
+        "sae_weights.safetensors",
+        "weights.safetensors",
+    ] {
         let p = dir.join(name);
         if p.exists() {
             return Ok(p);

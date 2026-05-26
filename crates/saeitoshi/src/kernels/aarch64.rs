@@ -27,15 +27,14 @@ unsafe fn encode_f32_neon_inner(
     let d_in = enc.d_in;
     let d_sae = enc.d_sae;
 
-    for b in 0..batch {
-        let x_row = &x[b * d_in..(b + 1) * d_in];
-        let pre_row = &mut pre_acts[b * d_sae..(b + 1) * d_sae];
-        for f in 0..d_sae {
-            let w_row = &enc.w_enc[f * d_in..(f + 1) * d_in];
+    for f in 0..d_sae {
+        let w_row = &enc.w_enc[f * d_in..(f + 1) * d_in];
+        let bias = enc.b_enc[f];
+        for b in 0..batch {
+            let x_row = &x[b * d_in..(b + 1) * d_in];
 
             let mut acc = vdupq_n_f32(0.0);
             let mut i = 0;
-            // 4 floats per NEON register.
             while i + 4 <= d_in {
                 let xv = vld1q_f32(x_row.as_ptr().add(i));
                 let wv = vld1q_f32(w_row.as_ptr().add(i));
@@ -48,7 +47,7 @@ unsafe fn encode_f32_neon_inner(
                 sum += x_row[i] * w_row[i];
                 i += 1;
             }
-            pre_row[f] = sum + enc.b_enc[f];
+            pre_acts[b * d_sae + f] = sum + bias;
         }
     }
 }

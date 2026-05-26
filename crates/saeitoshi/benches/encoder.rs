@@ -10,14 +10,22 @@ fn lcg(n: usize, seed: u64, scale: f32) -> Vec<f32> {
     let mut s = seed.wrapping_mul(0x9E3779B97F4A7C15).wrapping_add(1);
     (0..n)
         .map(|_| {
-            s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            s = s
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             let raw = (s >> 40) as u32;
             ((raw as f32 / (1u32 << 24) as f32) * 2.0 - 1.0) * scale
         })
         .collect()
 }
 
-fn run_backend(c: &mut Criterion, backend: &'static Backend, d_in: usize, d_sae: usize, batch: usize) {
+fn run_backend(
+    c: &mut Criterion,
+    backend: &'static Backend,
+    d_in: usize,
+    d_sae: usize,
+    batch: usize,
+) {
     let enc = EncoderWeights {
         w_enc: lcg(d_sae * d_in, 1, 0.1).into_boxed_slice(),
         b_enc: lcg(d_sae, 2, 0.01).into_boxed_slice(),
@@ -50,8 +58,7 @@ fn bench_encoder(c: &mut Criterion) {
         if std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma") {
             run_backend(c, &saeitoshi::backends::AVX2, d_in, d_sae, batch);
         }
-        if std::is_x86_feature_detected!("avx512f") && std::is_x86_feature_detected!("avx512bw")
-        {
+        if std::is_x86_feature_detected!("avx512f") && std::is_x86_feature_detected!("avx512bw") {
             run_backend(c, &saeitoshi::backends::AVX512, d_in, d_sae, batch);
         }
     }
@@ -62,7 +69,10 @@ fn bench_encoder(c: &mut Criterion) {
         }
     }
 
-    eprintln!("auto-selected backend on this CPU: {}", select_backend().name);
+    eprintln!(
+        "auto-selected backend on this CPU: {}",
+        select_backend().name
+    );
 }
 
 criterion_group!(benches, bench_encoder);

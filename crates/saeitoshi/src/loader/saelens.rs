@@ -65,9 +65,12 @@ pub fn load_dir(dir: &Path) -> Result<Sae> {
         .d_sae
         .or(raw.d_hidden)
         .or_else(|| raw.expansion_factor.map(|e| d_in * e))
-        .ok_or_else(|| SaeError::invalid(&cfg_path, "missing d_sae / d_hidden / expansion_factor"))?;
+        .ok_or_else(|| {
+            SaeError::invalid(&cfg_path, "missing d_sae / d_hidden / expansion_factor")
+        })?;
 
-    let architecture = parse_architecture(raw.architecture.as_deref(), raw.activation_fn.as_deref())?;
+    let architecture =
+        parse_architecture(raw.architecture.as_deref(), raw.activation_fn.as_deref())?;
     let normalize_activations = parse_normalize(raw.normalize_activations.as_deref());
     let weight_dtype = parse_dtype(raw.dtype.as_deref());
 
@@ -163,7 +166,11 @@ pub fn load_dir(dir: &Path) -> Result<Sae> {
             } else {
                 None
             };
-            Sparsifier::TopK { k: k as u32, post_relu, rescale }
+            Sparsifier::TopK {
+                k: k as u32,
+                post_relu,
+                rescale,
+            }
         }
         Architecture::Jumprelu | Architecture::BatchTopk => {
             let (threshold, threshold_shape) = read_f32_tensor(&view, "threshold")
@@ -175,7 +182,9 @@ pub fn load_dir(dir: &Path) -> Result<Sae> {
                     got: threshold_shape,
                 });
             }
-            Sparsifier::JumpReLU { thresholds: threshold.into_vec() }
+            Sparsifier::JumpReLU {
+                thresholds: threshold.into_vec(),
+            }
         }
         Architecture::Gated => {
             return Err(SaeError::UnknownArchitecture(
@@ -201,7 +210,11 @@ pub fn load_dir(dir: &Path) -> Result<Sae> {
 }
 
 fn pick_weights_file(dir: &Path) -> Result<std::path::PathBuf> {
-    for name in ["sae_weights.safetensors", "sae.safetensors", "weights.safetensors"] {
+    for name in [
+        "sae_weights.safetensors",
+        "sae.safetensors",
+        "weights.safetensors",
+    ] {
         let p = dir.join(name);
         if p.exists() {
             return Ok(p);

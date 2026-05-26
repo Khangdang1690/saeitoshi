@@ -193,7 +193,11 @@ fn write_saelens_dir(dir: &std::path::Path) {
         "normalize_activations": "none",
         "k": k,
     });
-    std::fs::write(dir.join("cfg.json"), serde_json::to_vec_pretty(&cfg).unwrap()).unwrap();
+    std::fs::write(
+        dir.join("cfg.json"),
+        serde_json::to_vec_pretty(&cfg).unwrap(),
+    )
+    .unwrap();
 
     // SAELens stores W_enc as [d_in, d_sae] in some checkpoints. We write it that
     // way and verify the loader transposes correctly.
@@ -238,7 +242,10 @@ fn loads_saelens_directory() {
     let feature = 0usize;
     let d_in_idx = 2usize;
     let got = sae.encoder().w_enc[feature * 4 + d_in_idx];
-    assert!((got - expected).abs() < 1e-6, "got {got}, expected {expected}");
+    assert!(
+        (got - expected).abs() < 1e-6,
+        "got {got}, expected {expected}"
+    );
 }
 
 #[test]
@@ -305,7 +312,9 @@ fn sit_round_trip_jumprelu() {
         cfg,
         enc,
         dec,
-        Sparsifier::JumpReLU { thresholds: vec![0.5; d] },
+        Sparsifier::JumpReLU {
+            thresholds: vec![0.5; d],
+        },
     )
     .unwrap();
 

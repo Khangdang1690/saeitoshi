@@ -13,7 +13,9 @@ fn lcg_floats(n: usize, seed: u64, scale: f32) -> Vec<f32> {
     let mut state = seed.wrapping_mul(0x9E3779B97F4A7C15).wrapping_add(1);
     let mut out = Vec::with_capacity(n);
     for _ in 0..n {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         // Map upper 24 bits to ±1, then scale.
         let raw = (state >> 40) as u32;
         let f = (raw as f32 / (1u32 << 24) as f32) * 2.0 - 1.0;
