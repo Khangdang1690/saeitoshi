@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use safetensors::{serialize_to_file, tensor::TensorView, Dtype};
 
 use saeitoshi::config::{Architecture, NormalizeMode, SaeConfig, WeightDtype};
-use saeitoshi::sae::{DecoderWeights, EncoderWeights, Sae, SparseOut};
+use saeitoshi::sae::{DecoderWeights, EncoderWeights, Sae, SparseOut, WeightLayout};
 use saeitoshi::sparsify::Sparsifier;
 
 fn identity_sae(d: usize, k: usize) -> Sae {
@@ -29,6 +29,7 @@ fn identity_sae(d: usize, k: usize) -> Sae {
         b_enc: vec![0.0; d].into_boxed_slice(),
         d_in: d,
         d_sae: d,
+        layout: WeightLayout::RowMajor,
     };
     let dec = DecoderWeights {
         w_dec: w_dec.into_boxed_slice(),
@@ -106,6 +107,7 @@ fn jumprelu_strict_threshold_and_relu_floor() {
         b_enc: sae.encoder().b_enc.clone(),
         d_in: d,
         d_sae: d,
+        layout: WeightLayout::RowMajor,
     };
     let dec = DecoderWeights {
         w_dec: sae.decoder().w_dec.clone(),
@@ -141,6 +143,7 @@ fn relu_drops_nonpositive() {
         b_enc: sae.encoder().b_enc.clone(),
         d_in: d,
         d_sae: d,
+        layout: WeightLayout::RowMajor,
     };
     let dec = DecoderWeights {
         w_dec: sae.decoder().w_dec.clone(),
@@ -301,6 +304,7 @@ fn sit_round_trip_jumprelu() {
         b_enc: sae.encoder().b_enc.clone(),
         d_in: d,
         d_sae: d,
+        layout: WeightLayout::RowMajor,
     };
     let dec = saeitoshi::sae::DecoderWeights {
         w_dec: sae.decoder().w_dec.clone(),

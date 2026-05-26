@@ -21,7 +21,7 @@ use serde::Deserialize;
 use crate::config::{Architecture, NormalizeMode, SaeConfig, WeightDtype};
 use crate::error::{Result, SaeError};
 use crate::io::safetensors::{read_f32_tensor, transpose, SafetensorsFile};
-use crate::sae::{DecoderWeights, EncoderWeights, Sae};
+use crate::sae::{DecoderWeights, EncoderWeights, Sae, WeightLayout};
 use crate::sparsify::Sparsifier;
 
 #[derive(Debug, Deserialize)]
@@ -123,6 +123,7 @@ pub fn load_dir(dir: &Path) -> Result<Sae> {
         b_enc,
         d_in,
         d_sae,
+        layout: WeightLayout::RowMajor,
     };
     let dec = DecoderWeights {
         w_dec,

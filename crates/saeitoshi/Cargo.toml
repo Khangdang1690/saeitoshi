@@ -46,3 +46,7 @@ default = []
 simd-x86 = []
 # Enables NEON intrinsics. On by default on aarch64; off elsewhere.
 simd-neon = []
+# v0.1 perf closure: cache-tiled, register-blocked GEMM encoder.
+# Gates the `kernels::gemm` module + tiled backends. Default flip in M6.
+# See docs/perf-analysis.md for the design.
+perf-v2 = []

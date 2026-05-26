@@ -17,17 +17,38 @@ pub struct Sae {
     backend: &'static Backend,
 }
 
+/// Memory layout of [`EncoderWeights::w_enc`].
+///
+/// Backends inspect this to dispatch packing-aware kernels. Loaders default
+/// to [`WeightLayout::RowMajor`]; the perf-v2 tiled backend repacks at SAE
+/// construction (see `kernels::gemm::pack::pack_w_enc`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WeightLayout {
+    /// `[d_sae, d_in]` row-major. The default; used by scalar / legacy SIMD.
+    RowMajor,
+    /// Packed for the tiled GEMM microkernel: M_R-row sub-panels, column-
+    /// major within each panel. Layout per panel `p` (starting feature
+    /// `f0 = p * m_r`): offset `p * d_in * m_r + k * m_r + lane` holds
+    /// `W_enc[f0 + lane, k]` for `lane in 0..m_r` and `k in 0..d_in`.
+    /// Trailing features (`d_sae % m_r`) are zero-padded.
+    PackedPanels { m_r: usize },
+}
+
 /// Encoder side of an SAE.
 ///
-/// `w_enc` is stored as `[d_sae, d_in]` row-major. Each row is one feature's
-/// encoder direction. This is the transpose of the math convention
+/// `w_enc` is stored as `[d_sae, d_in]` row-major by default. Each row is one
+/// feature's encoder direction. This is the transpose of the math convention
 /// (`pre_acts = x @ W_math` where `W_math: [d_in, d_sae]`), chosen so the
 /// scalar inner loop strides through `d_in` contiguously per output feature.
+///
+/// The `layout` field tells backends whether `w_enc` is the default row-major
+/// form or a packed-panel form for the tiled GEMM microkernel.
 pub struct EncoderWeights {
     pub w_enc: Box<[f32]>,
     pub b_enc: Box<[f32]>,
     pub d_in: usize,
     pub d_sae: usize,
+    pub layout: WeightLayout,
 }
 
 /// Decoder side of an SAE.

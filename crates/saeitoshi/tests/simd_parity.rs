@@ -7,7 +7,7 @@
 
 use saeitoshi::backends::SCALAR;
 use saeitoshi::kernels::{select_backend, Backend};
-use saeitoshi::sae::EncoderWeights;
+use saeitoshi::sae::{EncoderWeights, WeightLayout};
 
 fn lcg_floats(n: usize, seed: u64, scale: f32) -> Vec<f32> {
     let mut state = seed.wrapping_mul(0x9E3779B97F4A7C15).wrapping_add(1);
@@ -30,6 +30,7 @@ fn make_encoder(d_in: usize, d_sae: usize, seed: u64) -> EncoderWeights {
         b_enc: lcg_floats(d_sae, seed.wrapping_add(1), 0.01).into_boxed_slice(),
         d_in,
         d_sae,
+        layout: WeightLayout::RowMajor,
     }
 }
 
@@ -118,4 +119,83 @@ fn auto_selected_backend_matches_scalar() {
     let backend = select_backend();
     eprintln!("auto-selected backend: {}", backend.name);
     check_backend_across_sizes(backend.name, backend);
+}
+
+// ----- perf-v2 (tiled GEMM) parity -----
+//
+// The scalar tiled backend reads W via the packed-panel layout but does the
+// same f-outer / b-middle / k-inner reduction as the row-major scalar, so
+// per-output FP arithmetic is bit-exact. We still check at 1e-5 (the
+// launch-blocking gate) — bit-exact is a stricter property we get for free
+// at this commit and lose in M3 when the AVX2 microkernel reorders K.
+
+#[cfg(feature = "perf-v2")]
+fn make_packed_encoder(d_in: usize, d_sae: usize, seed: u64, m_r: usize) -> EncoderWeights {
+    let mut enc = make_encoder(d_in, d_sae, seed);
+    saeitoshi::kernels::gemm::pack::repack(&mut enc, m_r);
+    enc
+}
+
+#[cfg(feature = "perf-v2")]
+fn check_tiled_parity(name: &str, d_in: usize, d_sae: usize, batch: usize, seed: u64) {
+    use saeitoshi::backends::SCALAR_TILED;
+    use saeitoshi::kernels::gemm::DEFAULT_M_R;
+    let row_enc = make_encoder(d_in, d_sae, seed);
+    let packed_enc = make_packed_encoder(d_in, d_sae, seed, DEFAULT_M_R);
+    let x = lcg_floats(batch * d_in, seed.wrapping_add(100), 1.0);
+    let baseline = run_backend(&SCALAR, &x, &row_enc, batch);
+    let candidate = run_backend(&SCALAR_TILED, &x, &packed_enc, batch);
+    let max_err = baseline
+        .iter()
+        .zip(candidate.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f32, f32::max);
+    assert!(
+        max_err < 1e-5,
+        "{name} parity (d_in={d_in}, d_sae={d_sae}, batch={batch}, seed={seed}, m_r={}): \
+         max abs error {max_err}",
+        DEFAULT_M_R,
+    );
+}
+
+#[cfg(feature = "perf-v2")]
+#[test]
+fn scalar_tiled_parity_with_scalar_standard_sizes() {
+    // Same shape grid as `check_backend_across_sizes` so we cover odd d_in
+    // (scalar tail), clean SIMD-aligned d_in, and d_sae values that span
+    // partial trailing panels (e.g., 32 + 33 features at m_r=16).
+    let sizes = [
+        (4usize, 8),
+        (7, 16),
+        (8, 16),
+        (15, 32),
+        (16, 32),
+        (33, 64),
+        (64, 128),
+        (128, 256),
+        (256, 512),
+        (1024, 2048),
+    ];
+    for (i, &(d_in, d_sae)) in sizes.iter().enumerate() {
+        for &batch in &[1usize, 4, 8] {
+            check_tiled_parity("scalar_tiled", d_in, d_sae, batch, 42 + i as u64);
+        }
+    }
+}
+
+#[cfg(feature = "perf-v2")]
+#[test]
+fn scalar_tiled_parity_awkward_d_in() {
+    // Stress tail handling and packing-padded panels — these are the
+    // shapes most likely to surface microkernel tail bugs in M3.
+    let awkward_d_ins = [1usize, 7, 511, 513, 1023, 1024, 1025, 2049];
+    for (i, &d_in) in awkward_d_ins.iter().enumerate() {
+        // Pick d_sae values that exercise partial trailing panels at m_r=16:
+        //   17 → panel0 full, panel1 = 1 used + 15 padded
+        //   31 → panel0 full, panel1 = 15 used + 1 padded
+        //   32 → panel0 full, panel1 full (no padding)
+        for &d_sae in &[17usize, 31, 32, 64] {
+            check_tiled_parity("scalar_tiled", d_in, d_sae, 2, 200 + i as u64);
+        }
+    }
 }

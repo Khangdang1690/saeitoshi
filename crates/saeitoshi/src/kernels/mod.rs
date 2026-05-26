@@ -22,6 +22,9 @@ pub mod decoder;
 pub mod encoder;
 pub mod topk;
 
+#[cfg(feature = "perf-v2")]
+pub mod gemm;
+
 /// Encoder kernel signature. Implementations must be **safe to call** —
 /// SIMD impls go through a safe wrapper that asserts the relevant
 /// `#[target_feature]` is present (guaranteed by [`select_backend`]).

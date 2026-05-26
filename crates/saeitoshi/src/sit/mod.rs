@@ -23,7 +23,7 @@ use header::{SitHeader, SparsifierKind, TensorEntry};
 
 use crate::config::WeightDtype;
 use crate::error::{Result, SaeError};
-use crate::sae::{DecoderWeights, EncoderWeights, Sae};
+use crate::sae::{DecoderWeights, EncoderWeights, Sae, WeightLayout};
 use crate::sparsify::Sparsifier;
 
 /// Magic bytes at the start of every `.sit` file.
@@ -252,6 +252,7 @@ pub fn read(path: &Path) -> Result<Sae> {
         b_enc,
         d_in,
         d_sae,
+        layout: WeightLayout::RowMajor,
     };
     let dec = DecoderWeights {
         w_dec,

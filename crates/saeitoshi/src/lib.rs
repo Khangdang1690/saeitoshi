@@ -22,7 +22,7 @@ pub mod topk_examples;
 pub use config::{Architecture, NormalizeMode, SaeConfig, WeightDtype};
 pub use error::{Result, SaeError};
 pub use kernels::{select_backend, Backend};
-pub use sae::{Sae, SparseOut};
+pub use sae::{Sae, SparseOut, WeightLayout};
 pub use sparsify::Sparsifier;
 
 /// Backend statics exposed for tests + benchmarks.
@@ -34,4 +34,7 @@ pub mod backends {
 
     #[cfg(target_arch = "aarch64")]
     pub use crate::kernels::aarch64::NEON;
+
+    #[cfg(feature = "perf-v2")]
+    pub use crate::kernels::gemm::tiled_scalar::SCALAR_TILED;
 }

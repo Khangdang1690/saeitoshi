@@ -8,7 +8,7 @@ use std::path::Path;
 use crate::config::{Architecture, SaeConfig};
 use crate::error::{Result, SaeError};
 use crate::io::safetensors::{read_f32_tensor, transpose, SafetensorsFile};
-use crate::sae::{DecoderWeights, EncoderWeights, Sae};
+use crate::sae::{DecoderWeights, EncoderWeights, Sae, WeightLayout};
 use crate::sparsify::Sparsifier;
 
 pub fn load_safetensors(path: &Path, cfg: SaeConfig) -> Result<Sae> {
@@ -98,6 +98,7 @@ pub fn load_safetensors(path: &Path, cfg: SaeConfig) -> Result<Sae> {
         b_enc,
         d_in,
         d_sae,
+        layout: WeightLayout::RowMajor,
     };
     let dec = DecoderWeights {
         w_dec,

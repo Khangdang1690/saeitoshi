@@ -4,7 +4,7 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use saeitoshi::backends::SCALAR;
 use saeitoshi::kernels::{select_backend, Backend};
-use saeitoshi::sae::EncoderWeights;
+use saeitoshi::sae::{EncoderWeights, WeightLayout};
 
 fn lcg(n: usize, seed: u64, scale: f32) -> Vec<f32> {
     let mut s = seed.wrapping_mul(0x9E3779B97F4A7C15).wrapping_add(1);
@@ -31,6 +31,7 @@ fn run_backend(
         b_enc: lcg(d_sae, 2, 0.01).into_boxed_slice(),
         d_in,
         d_sae,
+        layout: WeightLayout::RowMajor,
     };
     let x = lcg(batch * d_in, 3, 1.0);
     let mut out = vec![0.0f32; batch * d_sae];
@@ -69,9 +70,45 @@ fn bench_encoder(c: &mut Criterion) {
         }
     }
 
+    #[cfg(feature = "perf-v2")]
+    run_tiled_scalar(c, d_in, d_sae, batch);
+
     eprintln!(
         "auto-selected backend on this CPU: {}",
         select_backend().name
+    );
+}
+
+#[cfg(feature = "perf-v2")]
+fn run_tiled_scalar(c: &mut Criterion, d_in: usize, d_sae: usize, batch: usize) {
+    use saeitoshi::backends::SCALAR_TILED;
+    use saeitoshi::kernels::gemm::{pack::repack, DEFAULT_M_R};
+    let mut enc = EncoderWeights {
+        w_enc: lcg(d_sae * d_in, 1, 0.1).into_boxed_slice(),
+        b_enc: lcg(d_sae, 2, 0.01).into_boxed_slice(),
+        d_in,
+        d_sae,
+        layout: WeightLayout::RowMajor,
+    };
+    repack(&mut enc, DEFAULT_M_R);
+    let x = lcg(batch * d_in, 3, 1.0);
+    let mut out = vec![0.0f32; batch * d_sae];
+    c.bench_with_input(
+        BenchmarkId::new(
+            SCALAR_TILED.name,
+            format!("d_in={d_in} d_sae={d_sae} B={batch}"),
+        ),
+        &(d_in, d_sae, batch),
+        |b, _| {
+            b.iter(|| {
+                (SCALAR_TILED.encode_f32)(
+                    black_box(&x),
+                    black_box(&enc),
+                    black_box(&mut out),
+                    batch,
+                );
+            })
+        },
     );
 }
 
