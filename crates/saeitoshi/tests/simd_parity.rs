@@ -6,7 +6,7 @@
 //! reference (same packed layout, scalar FMAs) to within 1e-5 absolute
 //! error — the launch-blocking parity gate.
 
-use saeitoshi::backends::SCALAR_TILED;
+use saeitoshi::backends::SCALAR;
 use saeitoshi::kernels::{select_backend, Backend};
 use saeitoshi::sae::{EncoderWeights, WeightLayout};
 
@@ -57,7 +57,7 @@ fn check_tiled_parity(
     use saeitoshi::kernels::gemm::DEFAULT_M_R;
     let packed_enc = make_packed_encoder(d_in, d_sae, seed, DEFAULT_M_R);
     let x = lcg_floats(batch * d_in, seed.wrapping_add(100), 1.0);
-    let baseline = run_backend(&SCALAR_TILED, &x, &packed_enc, batch);
+    let baseline = run_backend(&SCALAR, &x, &packed_enc, batch);
     let candidate = run_backend(backend, &x, &packed_enc, batch);
     let max_err = baseline
         .iter()
@@ -122,14 +122,7 @@ fn scalar_tiled_self_parity_standard_sizes() {
     ];
     for (i, &(d_in, d_sae)) in sizes.iter().enumerate() {
         for &batch in &[1usize, 5, 6, 12, 13] {
-            check_tiled_parity(
-                "scalar_tiled",
-                &SCALAR_TILED,
-                d_in,
-                d_sae,
-                batch,
-                200 + i as u64,
-            );
+            check_tiled_parity("scalar_tiled", &SCALAR, d_in, d_sae, batch, 200 + i as u64);
         }
     }
 }
@@ -137,23 +130,23 @@ fn scalar_tiled_self_parity_standard_sizes() {
 #[cfg(target_arch = "x86_64")]
 #[test]
 fn avx2_tiled_parity_with_scalar() {
-    use saeitoshi::backends::AVX2_TILED;
+    use saeitoshi::backends::AVX2;
     if !std::is_x86_feature_detected!("avx2") || !std::is_x86_feature_detected!("fma") {
         eprintln!("skipping: AVX2/FMA not available on this CPU");
         return;
     }
-    check_tiled_simd_across_sizes("avx2_tiled", &AVX2_TILED);
+    check_tiled_simd_across_sizes("avx2_tiled", &AVX2);
 }
 
 #[cfg(target_arch = "x86_64")]
 #[test]
 fn avx512_tiled_parity_with_scalar() {
-    use saeitoshi::backends::AVX512_TILED;
+    use saeitoshi::backends::AVX512;
     if !std::is_x86_feature_detected!("avx512f") {
         eprintln!("skipping: AVX-512F not available on this CPU");
         return;
     }
-    check_tiled_simd_across_sizes("avx512_tiled", &AVX512_TILED);
+    check_tiled_simd_across_sizes("avx512_tiled", &AVX512);
 }
 
 /// Tiled backends do their own M-block rayon split internally. Different
@@ -166,7 +159,7 @@ fn avx512_tiled_parity_with_scalar() {
 #[test]
 fn avx2_tiled_parity_across_thread_counts() {
     use rayon::ThreadPoolBuilder;
-    use saeitoshi::backends::AVX2_TILED;
+    use saeitoshi::backends::AVX2;
 
     if !std::is_x86_feature_detected!("avx2") || !std::is_x86_feature_detected!("fma") {
         eprintln!("skipping: AVX2/FMA not available on this CPU");
@@ -189,7 +182,7 @@ fn avx2_tiled_parity_across_thread_counts() {
         pool.install(|| {
             check_tiled_parity(
                 &format!("avx2_tiled[threads={num_threads}]"),
-                &AVX2_TILED,
+                &AVX2,
                 d_in,
                 d_sae,
                 batch,
@@ -209,14 +202,7 @@ fn scalar_tiled_parity_awkward_d_in() {
         //   31 → panel0 full, panel1 = 15 used + 1 padded
         //   32 → panel0 full, panel1 full (no padding)
         for &d_sae in &[17usize, 31, 32, 64] {
-            check_tiled_parity(
-                "scalar_tiled",
-                &SCALAR_TILED,
-                d_in,
-                d_sae,
-                2,
-                200 + i as u64,
-            );
+            check_tiled_parity("scalar_tiled", &SCALAR, d_in, d_sae, 2, 200 + i as u64);
         }
     }
 }

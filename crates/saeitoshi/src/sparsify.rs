@@ -1,6 +1,6 @@
 //! Sparsifier enum dispatched once per tile.
 
-use crate::kernels::topk_heap;
+use crate::kernels::topk;
 use crate::sae::SparseOut;
 
 /// Scratch buffers reused across tiles in the TopK selection path.
@@ -101,7 +101,7 @@ fn apply_topk(
                     *v *= s;
                 }
             }
-            topk_heap::topk_select(row, k, scratch);
+            topk::topk_select(row, k, scratch);
             for &(idx, val) in scratch.indexed.iter() {
                 let v = if post_relu { val.max(0.0) } else { val };
                 if post_relu && v == 0.0 {
@@ -138,7 +138,7 @@ fn apply_topk(
                         *v *= s;
                     }
                 }
-                topk_heap::topk_select(row, k, thread_scratch);
+                topk::topk_select(row, k, thread_scratch);
                 let mut n: u32 = 0;
                 for &(idx, val) in thread_scratch.indexed.iter() {
                     let v = if post_relu { val.max(0.0) } else { val };

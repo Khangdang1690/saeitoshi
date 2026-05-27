@@ -5,7 +5,7 @@
 //! `SAEITOSHI_SKIP_HEADLINE_BENCH=1` while iterating.
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use saeitoshi::backends::SCALAR_TILED;
+use saeitoshi::backends::SCALAR;
 use saeitoshi::kernels::{select_backend, Backend};
 use saeitoshi::sae::{EncoderWeights, WeightLayout};
 
@@ -56,21 +56,21 @@ fn bench_encoder(c: &mut Criterion) {
     let d_sae = 16_384usize;
     let batch = 8usize;
 
-    run_tiled(c, &SCALAR_TILED, d_in, d_sae, batch);
+    run_tiled(c, &SCALAR, d_in, d_sae, batch);
 
     #[cfg(target_arch = "x86_64")]
     {
         if std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma") {
-            run_tiled(c, &saeitoshi::backends::AVX2_TILED, d_in, d_sae, batch);
+            run_tiled(c, &saeitoshi::backends::AVX2, d_in, d_sae, batch);
         }
         if std::is_x86_feature_detected!("avx512f") {
-            run_tiled(c, &saeitoshi::backends::AVX512_TILED, d_in, d_sae, batch);
+            run_tiled(c, &saeitoshi::backends::AVX512, d_in, d_sae, batch);
         }
     }
     #[cfg(target_arch = "aarch64")]
     {
         if std::arch::is_aarch64_feature_detected!("neon") {
-            run_tiled(c, &saeitoshi::backends::NEON_TILED, d_in, d_sae, batch);
+            run_tiled(c, &saeitoshi::backends::NEON, d_in, d_sae, batch);
         }
     }
 
@@ -82,22 +82,10 @@ fn bench_encoder(c: &mut Criterion) {
         let h_d_sae = 16_384usize;
         let h_batch = 512usize;
         if std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma") {
-            run_tiled(
-                c,
-                &saeitoshi::backends::AVX2_TILED,
-                h_d_in,
-                h_d_sae,
-                h_batch,
-            );
+            run_tiled(c, &saeitoshi::backends::AVX2, h_d_in, h_d_sae, h_batch);
         }
         if std::is_x86_feature_detected!("avx512f") {
-            run_tiled(
-                c,
-                &saeitoshi::backends::AVX512_TILED,
-                h_d_in,
-                h_d_sae,
-                h_batch,
-            );
+            run_tiled(c, &saeitoshi::backends::AVX512, h_d_in, h_d_sae, h_batch);
         }
     }
 

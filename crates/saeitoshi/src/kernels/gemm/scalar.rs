@@ -2,8 +2,7 @@
 //!
 //! Exercises the packed-panel layout but performs the FMAs in plain
 //! scalar Rust. The SIMD microkernels must agree with this reference at
-//! 1e-5 — it's the parity oracle for [`super::tiled_x86`] and
-//! [`super::tiled_neon`].
+//! 1e-5 — it's the parity oracle for [`super::x86`] and [`super::neon`].
 //!
 //! Numerical contract: each `<W_enc[f], x[b]>` is computed as a full
 //! d_in-length reduction with left-to-right accumulation, reading W via
@@ -33,7 +32,7 @@ pub fn encode_f32(x: &[f32], enc: &EncoderWeights, pre_acts: &mut [f32], batch: 
     let m_r = match enc.layout {
         WeightLayout::PackedPanels { m_r } => m_r,
         WeightLayout::RowMajor => panic!(
-            "scalar_tiled backend called with RowMajor weights — pack via \
+            "scalar backend called with RowMajor weights — pack via \
              kernels::gemm::pack::repack first",
         ),
     };
@@ -66,10 +65,9 @@ pub fn encode_f32(x: &[f32], enc: &EncoderWeights, pre_acts: &mut [f32], batch: 
     }
 }
 
-/// Backend descriptor. Selected explicitly by tests/benches in M2; wired
-/// into `select_backend` once the SIMD microkernels land and the repack
-/// is hoisted into `Sae::from_parts` (M4).
-pub static SCALAR_TILED: Backend = Backend {
-    name: "scalar_tiled",
+/// Backend descriptor. Stays available as the no-SIMD fallback and as
+/// the parity oracle for the SIMD backends in tests.
+pub static SCALAR: Backend = Backend {
+    name: "scalar",
     encode_f32,
 };

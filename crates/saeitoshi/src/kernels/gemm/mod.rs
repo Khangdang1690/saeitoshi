@@ -18,13 +18,13 @@
 //! kernel.
 
 pub mod pack;
-pub mod tiled_scalar;
+pub mod scalar;
 
 #[cfg(target_arch = "x86_64")]
-pub mod tiled_x86;
+pub mod x86;
 
 #[cfg(target_arch = "aarch64")]
-pub mod tiled_neon;
+pub mod neon;
 
 /// Resolve the M-block grouping size from `SAEITOSHI_GEMM_TILE=MC,NC,KC`,
 /// falling back to [`DEFAULT_M_C`].

@@ -5,7 +5,7 @@
 //! repacking. A wider AVX-512 32x12 variant would need its own packing
 //! pass and is left as a follow-up.
 //!
-//! Numerical contract: ≤1e-5 max-abs-error vs [`super::tiled_scalar`].
+//! Numerical contract: ≤1e-5 max-abs-error vs [`super::scalar`].
 //! The microkernels reorder K reduction by lane (each ymm/zmm lane carries
 //! its own FMA chain), but per-lane the reduction is left-to-right in K.
 //! Cross-lane reordering happens only inside the FMA itself (mul+add fused
@@ -195,7 +195,7 @@ unsafe fn microkernel_16x12_avx512(
 
 /// Sharing `*mut f32` across rayon tasks for the M-block parallel pass.
 ///
-/// The parallel iteration in [`encode_f32_avx2_tiled`] / `_avx512_tiled`
+/// The parallel iteration in [`encode_f32_avx2`] / `encode_f32_avx512`
 /// partitions the M (feature) dimension across rayon tasks. Each task
 /// writes to columns `[panel * M_R, (panel + 1) * M_R)` of `pre_acts` for
 /// the panels it owns; column ranges are disjoint across tasks and
@@ -328,7 +328,7 @@ unsafe fn process_full_panel_avx512(
 
 // ---------------- AVX2 outer loop ----------------
 
-fn encode_f32_avx2_tiled(x: &[f32], enc: &EncoderWeights, pre_acts: &mut [f32], batch: usize) {
+fn encode_f32_avx2(x: &[f32], enc: &EncoderWeights, pre_acts: &mut [f32], batch: usize) {
     // SAFETY for the unsafe blocks below: AVX2+FMA detection happens in
     // `select_backend` before this fn pointer is returned; the microkernel
     // is `#[target_feature(enable = "avx2,fma")]`.
@@ -337,14 +337,11 @@ fn encode_f32_avx2_tiled(x: &[f32], enc: &EncoderWeights, pre_acts: &mut [f32], 
     let m_r = match enc.layout {
         WeightLayout::PackedPanels { m_r } => m_r,
         WeightLayout::RowMajor => panic!(
-            "avx2_tiled backend called with RowMajor weights — pack via \
+            "avx2 backend called with RowMajor weights — pack via \
              kernels::gemm::pack::repack first",
         ),
     };
-    assert_eq!(
-        m_r, M_R_AVX2,
-        "avx2_tiled expects m_r = {M_R_AVX2}, got {m_r}",
-    );
+    assert_eq!(m_r, M_R_AVX2, "avx2 expects m_r = {M_R_AVX2}, got {m_r}",);
     debug_assert_eq!(x.len(), batch * d_in);
     debug_assert_eq!(pre_acts.len(), batch * d_sae);
     debug_assert_eq!(enc.w_enc.len(), packed_len(d_sae, d_in, m_r));
@@ -401,27 +398,27 @@ fn encode_f32_avx2_tiled(x: &[f32], enc: &EncoderWeights, pre_acts: &mut [f32], 
     }
 }
 
-pub static AVX2_TILED: Backend = Backend {
-    name: "avx2_tiled",
-    encode_f32: encode_f32_avx2_tiled,
+pub static AVX2: Backend = Backend {
+    name: "avx2",
+    encode_f32: encode_f32_avx2,
 };
 
 // ---------------- AVX-512 outer loop ----------------
 
-fn encode_f32_avx512_tiled(x: &[f32], enc: &EncoderWeights, pre_acts: &mut [f32], batch: usize) {
+fn encode_f32_avx512(x: &[f32], enc: &EncoderWeights, pre_acts: &mut [f32], batch: usize) {
     // SAFETY: AVX-512F detection guarded at `select_backend`.
     let d_in = enc.d_in;
     let d_sae = enc.d_sae;
     let m_r = match enc.layout {
         WeightLayout::PackedPanels { m_r } => m_r,
         WeightLayout::RowMajor => panic!(
-            "avx512_tiled backend called with RowMajor weights — pack via \
+            "avx512 backend called with RowMajor weights — pack via \
              kernels::gemm::pack::repack first",
         ),
     };
     assert_eq!(
         m_r, M_R_AVX512,
-        "avx512_tiled expects m_r = {M_R_AVX512}, got {m_r}",
+        "avx512 expects m_r = {M_R_AVX512}, got {m_r}",
     );
     debug_assert_eq!(x.len(), batch * d_in);
     debug_assert_eq!(pre_acts.len(), batch * d_sae);
@@ -465,7 +462,7 @@ fn encode_f32_avx512_tiled(x: &[f32], enc: &EncoderWeights, pre_acts: &mut [f32]
     }
 }
 
-pub static AVX512_TILED: Backend = Backend {
-    name: "avx512_tiled",
-    encode_f32: encode_f32_avx512_tiled,
+pub static AVX512: Backend = Backend {
+    name: "avx512",
+    encode_f32: encode_f32_avx512,
 };

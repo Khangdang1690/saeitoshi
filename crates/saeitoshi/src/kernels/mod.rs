@@ -11,7 +11,7 @@ use crate::sae::EncoderWeights;
 pub mod decoder;
 pub mod encoder;
 pub mod gemm;
-pub mod topk_heap;
+pub mod topk;
 
 /// Encoder kernel signature. Implementations must be **safe to call** —
 /// SIMD impls go through a safe wrapper that asserts the relevant
@@ -33,19 +33,19 @@ pub fn select_backend() -> &'static Backend {
     #[cfg(target_arch = "x86_64")]
     {
         if std::is_x86_feature_detected!("avx512f") {
-            return &gemm::tiled_x86::AVX512_TILED;
+            return &gemm::x86::AVX512;
         }
         if std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma") {
-            return &gemm::tiled_x86::AVX2_TILED;
+            return &gemm::x86::AVX2;
         }
     }
     #[cfg(target_arch = "aarch64")]
     {
         if std::arch::is_aarch64_feature_detected!("neon") {
-            return &gemm::tiled_neon::NEON_TILED;
+            return &gemm::neon::NEON;
         }
     }
-    &gemm::tiled_scalar::SCALAR_TILED
+    &gemm::scalar::SCALAR
 }
 
 /// Packing `m_r` for the given backend. Every shipping backend is tiled

@@ -25,11 +25,11 @@ pub use sparsify::Sparsifier;
 
 /// Backend statics exposed for tests + benchmarks.
 pub mod backends {
-    pub use crate::kernels::gemm::tiled_scalar::SCALAR_TILED;
+    pub use crate::kernels::gemm::scalar::SCALAR;
 
     #[cfg(target_arch = "x86_64")]
-    pub use crate::kernels::gemm::tiled_x86::{AVX2_TILED, AVX512_TILED};
+    pub use crate::kernels::gemm::x86::{AVX2, AVX512};
 
     #[cfg(target_arch = "aarch64")]
-    pub use crate::kernels::gemm::tiled_neon::NEON_TILED;
+    pub use crate::kernels::gemm::neon::NEON;
 }

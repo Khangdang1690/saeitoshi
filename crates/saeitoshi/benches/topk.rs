@@ -28,7 +28,7 @@ fn bench_topk(c: &mut Criterion) {
             &(d_sae, k),
             |b, _| {
                 b.iter(|| {
-                    saeitoshi::kernels::topk_heap::topk_select(
+                    saeitoshi::kernels::topk::topk_select(
                         black_box(&scores),
                         black_box(k),
                         black_box(&mut scratch),

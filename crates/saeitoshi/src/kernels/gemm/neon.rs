@@ -215,20 +215,17 @@ unsafe fn process_full_panel_neon(
     }
 }
 
-fn encode_f32_neon_tiled(x: &[f32], enc: &EncoderWeights, pre_acts: &mut [f32], batch: usize) {
+fn encode_f32_neon(x: &[f32], enc: &EncoderWeights, pre_acts: &mut [f32], batch: usize) {
     let d_in = enc.d_in;
     let d_sae = enc.d_sae;
     let m_r = match enc.layout {
         WeightLayout::PackedPanels { m_r } => m_r,
         WeightLayout::RowMajor => panic!(
-            "neon_tiled backend called with RowMajor weights — pack via \
+            "neon backend called with RowMajor weights — pack via \
              kernels::gemm::pack::repack first",
         ),
     };
-    assert_eq!(
-        m_r, M_R_NEON,
-        "neon_tiled expects m_r = {M_R_NEON}, got {m_r}",
-    );
+    assert_eq!(m_r, M_R_NEON, "neon expects m_r = {M_R_NEON}, got {m_r}",);
     debug_assert_eq!(x.len(), batch * d_in);
     debug_assert_eq!(pre_acts.len(), batch * d_sae);
     debug_assert_eq!(enc.w_enc.len(), packed_len(d_sae, d_in, m_r));
@@ -248,7 +245,7 @@ fn encode_f32_neon_tiled(x: &[f32], enc: &EncoderWeights, pre_acts: &mut [f32], 
             let panel_start = m_block * panels_per_m_block;
             let panel_end = ((m_block + 1) * panels_per_m_block).min(n_full_panels);
             for panel in panel_start..panel_end {
-                // SAFETY: see PreActsMut-equivalent argument in tiled_x86 —
+                // SAFETY: see PreActsMut-equivalent argument in super::x86 —
                 // disjoint cache-line-aligned column ranges per task.
                 unsafe {
                     process_full_panel_neon(panel, x, enc, ptr, batch);
@@ -273,7 +270,7 @@ fn encode_f32_neon_tiled(x: &[f32], enc: &EncoderWeights, pre_acts: &mut [f32], 
     }
 }
 
-pub static NEON_TILED: Backend = Backend {
-    name: "neon_tiled",
-    encode_f32: encode_f32_neon_tiled,
+pub static NEON: Backend = Backend {
+    name: "neon",
+    encode_f32: encode_f32_neon,
 };
