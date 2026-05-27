@@ -61,15 +61,10 @@ impl EncoderWeights {
     pub fn w_enc_row_major(&self) -> std::borrow::Cow<'_, [f32]> {
         match self.layout {
             WeightLayout::RowMajor => std::borrow::Cow::Borrowed(&self.w_enc),
-            #[cfg(feature = "perf-v2")]
             WeightLayout::PackedPanels { m_r } => std::borrow::Cow::Owned(
                 crate::kernels::gemm::pack::unpack_w_enc(&self.w_enc, self.d_sae, self.d_in, m_r)
                     .into_vec(),
             ),
-            #[cfg(not(feature = "perf-v2"))]
-            WeightLayout::PackedPanels { .. } => {
-                unreachable!("PackedPanels layout is only constructible with the perf-v2 feature")
-            }
         }
     }
 }
@@ -178,12 +173,9 @@ impl Sae {
         // round-trip packed weights need the packed branch.
         let expected_w_len = match enc.layout {
             WeightLayout::RowMajor => cfg.d_sae * cfg.d_in,
-            #[cfg(feature = "perf-v2")]
             WeightLayout::PackedPanels { m_r } => {
                 crate::kernels::gemm::pack::packed_len(cfg.d_sae, cfg.d_in, m_r)
             }
-            #[cfg(not(feature = "perf-v2"))]
-            WeightLayout::PackedPanels { .. } => unreachable!(),
         };
         if enc.w_enc.len() != expected_w_len {
             return Err(SaeError::ShapeMismatch {
@@ -214,10 +206,8 @@ impl Sae {
             });
         }
         let backend = select_backend();
-        // If the selected backend needs packed weights (perf-v2 tiled
-        // backends), repack now. This amortizes the layout permutation
-        // across every encode call for the lifetime of the SAE.
-        #[cfg(feature = "perf-v2")]
+        // Repack into the tiled microkernel's packed-panel layout once
+        // here so every encode call reuses the same buffer.
         let enc = {
             let mut enc = enc;
             if let Some(m_r) = crate::kernels::backend_m_r(backend) {
@@ -232,12 +222,6 @@ impl Sae {
             sparsifier,
             backend,
         })
-    }
-
-    /// Override the auto-detected backend (test + benchmark hook).
-    pub fn with_backend(mut self, backend: &'static Backend) -> Self {
-        self.backend = backend;
-        self
     }
 
     /// Name of the currently selected kernel backend.

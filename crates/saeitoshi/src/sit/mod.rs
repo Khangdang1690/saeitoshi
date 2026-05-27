@@ -72,15 +72,10 @@ pub fn write(sae: &Sae, path: &Path) -> Result<()> {
     // backend-agnostic so they can be loaded under any feature set.
     let w_enc_row_major: std::borrow::Cow<'_, [f32]> = match sae.encoder().layout {
         WeightLayout::RowMajor => std::borrow::Cow::Borrowed(&sae.encoder().w_enc),
-        #[cfg(feature = "perf-v2")]
         WeightLayout::PackedPanels { m_r } => std::borrow::Cow::Owned(
             crate::kernels::gemm::pack::unpack_w_enc(&sae.encoder().w_enc, d_sae, d_in, m_r)
                 .into_vec(),
         ),
-        #[cfg(not(feature = "perf-v2"))]
-        WeightLayout::PackedPanels { .. } => {
-            unreachable!("PackedPanels layout is only constructible with the perf-v2 feature")
-        }
     };
 
     push(

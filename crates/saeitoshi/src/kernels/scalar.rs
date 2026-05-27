@@ -1,49 +1,9 @@
-//! Portable scalar reference kernels — the parity gate.
-//!
-//! These match PyTorch's FP32 op order: row-major, f32 accumulators, no FMA
-//! reassociation. SIMD backends (M3) must agree with these to within 1e-5,
-//! which transitively guarantees ≤1e-5 vs SAELens.
+//! Scalar reference impls used by the decode path and the legacy TopK
+//! dispatcher. Both move out in the next commits — `decode_sparse` into
+//! [`super::decoder`], `topk_select` removed entirely.
 
-use crate::sae::{DecoderWeights, EncoderWeights, SparseOut};
+use crate::sae::{DecoderWeights, SparseOut};
 use crate::sparsify::TopKScratch;
-
-use super::Backend;
-
-/// Encoder: `pre_acts[b, f] = b_enc[f] + sum_i x[b, i] * W_enc[f, i]`.
-///
-/// `x` is `[batch * d_in]`, `pre_acts` is `[batch * d_sae]`, both row-major.
-/// `W_enc` is stored as `[d_sae, d_in]` row-major.
-///
-/// Loop order: outer over features `f`, inner over batches `b`, innermost
-/// over `i`. This streams `W_enc` (the dominant memory user — 128 MB for
-/// `d_in=2048, d_sae=16384`) once across the whole call rather than once
-/// per batch row. `x` stays hot in L2, `pre_acts` writes are scattered but
-/// small.
-//
-// Hot kernel — keep integer-indexed loops so the SIMD replacement in M3
-// can drop in with the same shape.
-#[allow(clippy::needless_range_loop)]
-pub fn encode_f32(x: &[f32], enc: &EncoderWeights, pre_acts: &mut [f32], batch: usize) {
-    let d_in = enc.d_in;
-    let d_sae = enc.d_sae;
-    debug_assert_eq!(x.len(), batch * d_in);
-    debug_assert_eq!(pre_acts.len(), batch * d_sae);
-    debug_assert_eq!(enc.w_enc.len(), d_sae * d_in);
-    debug_assert_eq!(enc.b_enc.len(), d_sae);
-
-    for f in 0..d_sae {
-        let w_row = &enc.w_enc[f * d_in..(f + 1) * d_in];
-        let bias = enc.b_enc[f];
-        for b in 0..batch {
-            let x_row = &x[b * d_in..(b + 1) * d_in];
-            let mut acc = bias;
-            for i in 0..d_in {
-                acc += x_row[i] * w_row[i];
-            }
-            pre_acts[b * d_sae + f] = acc;
-        }
-    }
-}
 
 /// Sparse decoder: `out[b, :] = b_dec + sum_{(f, v) in z[b]} v * W_dec[f, :]`.
 pub fn decode_sparse(z: &SparseOut, dec: &DecoderWeights, out: &mut [f32]) {
@@ -85,8 +45,3 @@ pub fn topk_select(scores: &[f32], k: usize, scratch: &mut TopKScratch) {
     scratch.indexed.truncate(k);
     scratch.indexed.sort_by_key(|&(i, _)| i);
 }
-
-pub static SCALAR: Backend = Backend {
-    name: "scalar",
-    encode_f32,
-};

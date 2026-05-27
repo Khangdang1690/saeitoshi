@@ -45,20 +45,8 @@ name = "topk"
 harness = false
 
 [features]
-# v0.1: perf-v2 is on by default. The legacy per-dot-product kernels are
-# still compiled in and reachable at runtime via SAEITOSHI_BACKEND=legacy
-# for one release in case a regression needs bisection. To bench the
-# legacy path standalone, build with `--no-default-features`.
-# v0.2: topk-v2 is on by default. The legacy full-sort TopK in
-# `kernels::scalar::topk_select` stays compiled in, reachable via
-# SAEITOSHI_TOPK=legacy for A/B bisection.
-default = ["perf-v2", "topk-v2"]
-# Enables x86 SIMD intrinsics. On by default on x86_64; off elsewhere.
-simd-x86 = []
-# Enables NEON intrinsics. On by default on aarch64; off elsewhere.
-simd-neon = []
-# Cache-tiled, register-blocked GEMM encoder. See docs/perf-analysis.md.
-perf-v2 = []
+default = ["topk-v2"]
 # Heap-based partial-sort TopK with branchless CAS + rayon row-level
-# threading. See docs/perf-analysis.md.
+# threading. See docs/perf-analysis.md. (Deleted in the next commit; the
+# heap path becomes unconditional.)
 topk-v2 = []
