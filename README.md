@@ -77,16 +77,12 @@ MKL is hard to beat on standard matmul shapes — that's not surprising. v0's va
 
 The 5× SAELens speedup the project brief targets is the v0.1 focus: tiled GEMM microkernel, INT8 weight loading, cross-batch register reuse. The architecture is set up for it (Backend vtable, runtime SIMD dispatch, on-disk format with dtype slots reserved).
 
-### v0.1 update — tiled GEMM (`perf-v2`, default since v0.1)
+### Performance vs sae_lens 6.44
 
-v0.1 ships a cache-tiled, register-blocked GEMM encoder that runs by
-default. The kernel is documented from first principles in
-[docs/perf-analysis.md](docs/perf-analysis.md). The legacy
-per-dot-product backend is reachable via `SAEITOSHI_BACKEND=legacy` for
-one release in case you need to bisect a regression.
-
-End-to-end `sae.encode` on the same i9-13900HX, TopK k=32, vs sae_lens
-6.44 (run `python benches/bench_vs_saelens.py` to reproduce):
+The shipping encoder is a cache-tiled, register-blocked GEMM (v0.1)
+plus a heap-based partial-sort TopK with row-level rayon parallelism
+(v0.2). End-to-end `sae.encode` on an i9-13900HX, TopK k=32, vs
+sae_lens 6.44 (run `python benches/bench_vs_saelens.py` to reproduce):
 
 | d_in × d_sae | B | saeitoshi v0 | saeitoshi v0.1 | saeitoshi v0.2 | sae_lens (MKL) |
 |---|---|---|---|---|---|
@@ -95,23 +91,18 @@ End-to-end `sae.encode` on the same i9-13900HX, TopK k=32, vs sae_lens
 | 2048 × 16384 | 4096 | ~5900 ms | ~3920 ms | **~438 ms** | ~467 ms |
 | 2048 × 16384 |  512 | ~735 ms  | ~466 ms  | **~47 ms**  | ~70 ms  |
 
-v0.2 closes the TopK gap: a heap-based partial sort (O(n log k) vs the
-v0 sort's O(n log n)) with branchless integer-key comparison, plus
-row-level rayon parallelism in the sparsifier. Isolated TopK at
-d_sae=16384, k=32 dropped from ~853 µs to ~16 µs per row (~52×). The
-heap kernel is now the default; flip back with `SAEITOSHI_TOPK=legacy`
-for one release if you need to bisect.
-
-What perf-v2 actually changes:
+The kernel design is documented from first principles in
+[docs/perf-analysis.md](docs/perf-analysis.md). Highlights:
 
 - W is repacked once at SAE load into `M_R=16`-row column-major
   panels. The microkernel streams that panel through a register-
   blocked tile (AVX2 16×6 / AVX-512 16×12 / NEON 16×6).
 - M-block rayon threading: each thread owns a contiguous slice of
-  `d_sae` features and shares the `x` panel via L3. The legacy backend
-  partitioned the batch, so every thread re-streamed the full 128 MB
-  W from DRAM per call.
-- Same ≤1e-5 SAELens parity gate. SIMD parity in
+  `d_sae` features and shares the `x` panel via L3 rather than
+  re-streaming the weight matrix.
+- Heap-based TopK: at d_sae=16384, k=32 the isolated TopK cost dropped
+  from ~853 µs to ~16 µs per row (~52×) vs the original full sort.
+- ≤1e-5 SAELens parity gate. SIMD parity in
   [crates/saeitoshi/tests/simd_parity.rs](crates/saeitoshi/tests/simd_parity.rs)
   also runs the tiled backend at 1/2/4/24 rayon thread counts to catch
   false-sharing regressions.
