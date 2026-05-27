@@ -8,7 +8,7 @@
 //! Packing transposes the local `M_R x K` slab into `K x M_R` panels so
 //! the kernel's inner loop streams `M_R` contiguous floats per K step.
 //! Because W_enc is loaded once and reused across every encode call, we
-//! repack at SAE construction (M4) and amortize the cost forever.
+//! repack at SAE construction time and amortize the cost forever.
 //!
 //! Packed layout (for a panel of M_R rows starting at feature `f0`):
 //! ```text

@@ -10,9 +10,7 @@ Usage (with the project's .venv active):
     python benches/bench_vs_saelens.py --warm 5 --iters 30
 
 The default shape grid matches README.md so the printed table can be
-pasted in directly. The saeitoshi wheel must have the `perf-v2` feature
-enabled (default since v0.1; bisect with `SAEITOSHI_BACKEND=legacy` to
-verify the gap is closed by the tiled path rather than something else).
+pasted in directly.
 """
 
 from __future__ import annotations

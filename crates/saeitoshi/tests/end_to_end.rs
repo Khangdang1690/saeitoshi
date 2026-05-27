@@ -107,9 +107,9 @@ fn jumprelu_strict_threshold_and_relu_floor() {
         b_enc: sae.encoder().b_enc.clone(),
         d_in: d,
         d_sae: d,
-        // Propagate the source SAE's layout — with perf-v2 enabled,
-        // `from_parts` already repacked the original SAE, so cloning
-        // returns packed weights that should be re-wrapped as packed.
+        // Propagate the source SAE's layout — `from_parts` repacked the
+        // original encoder weights into PackedPanels, so cloning returns
+        // packed weights that must stay tagged as packed.
         layout: sae.encoder().layout,
     };
     let dec = DecoderWeights {
@@ -146,9 +146,9 @@ fn relu_drops_nonpositive() {
         b_enc: sae.encoder().b_enc.clone(),
         d_in: d,
         d_sae: d,
-        // Propagate the source SAE's layout — with perf-v2 enabled,
-        // `from_parts` already repacked the original SAE, so cloning
-        // returns packed weights that should be re-wrapped as packed.
+        // Propagate the source SAE's layout — `from_parts` repacked the
+        // original encoder weights into PackedPanels, so cloning returns
+        // packed weights that must stay tagged as packed.
         layout: sae.encoder().layout,
     };
     let dec = DecoderWeights {

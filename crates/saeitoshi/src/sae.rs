@@ -19,12 +19,12 @@ pub struct Sae {
 
 /// Memory layout of [`EncoderWeights::w_enc`].
 ///
-/// Backends inspect this to dispatch packing-aware kernels. Loaders default
-/// to [`WeightLayout::RowMajor`]; the perf-v2 tiled backend repacks at SAE
-/// construction (see `kernels::gemm::pack::pack_w_enc`).
+/// Loaders produce [`WeightLayout::RowMajor`]; `Sae::from_parts` repacks
+/// into [`WeightLayout::PackedPanels`] for the tiled GEMM kernel before
+/// storing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WeightLayout {
-    /// `[d_sae, d_in]` row-major. The default; used by scalar / legacy SIMD.
+    /// `[d_sae, d_in]` row-major. Loader-facing form.
     RowMajor,
     /// Packed for the tiled GEMM microkernel: M_R-row sub-panels, column-
     /// major within each panel. Layout per panel `p` (starting feature

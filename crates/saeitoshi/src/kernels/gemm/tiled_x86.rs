@@ -1,19 +1,16 @@
 //! AVX2 (16x6) and AVX-512 (16x12) tiled GEMM encoders.
 //!
-//! Both microkernels share the same packed-W layout (M_R = 16), so a single
-//! pack at SAE construction time (M4) feeds either backend without
-//! repacking. The plan originally specified AVX-512 at 32x12; we land 16x12
-//! here so packing infra is shared, and revisit the 32x12 variant as a
-//! follow-up once the headline benchmark numbers are in.
+//! Both microkernels share the same packed-W layout (M_R = 16), so a
+//! single pack at SAE construction time feeds either backend without
+//! repacking. A wider AVX-512 32x12 variant would need its own packing
+//! pass and is left as a follow-up.
 //!
-//! Numerical contract: ≤1e-5 max-abs-error vs the row-major scalar
-//! reference (`kernels::scalar`). The microkernels reorder K reduction by
-//! lane (each ymm/zmm lane carries its own FMA chain), but per-lane the
-//! reduction is left-to-right in K — same as scalar. Cross-lane reordering
-//! happens only inside the FMA itself (mul+add fused into one rounding,
-//! vs scalar's two roundings). That's the entire FP delta; the design
-//! analysis (docs/perf-analysis.md) bounds it well within 1e-5 for our
-//! d_in range.
+//! Numerical contract: ≤1e-5 max-abs-error vs [`super::tiled_scalar`].
+//! The microkernels reorder K reduction by lane (each ymm/zmm lane carries
+//! its own FMA chain), but per-lane the reduction is left-to-right in K.
+//! Cross-lane reordering happens only inside the FMA itself (mul+add fused
+//! into one rounding). The design analysis (docs/perf-analysis.md) bounds
+//! the delta well within 1e-5 for our d_in range.
 
 #![allow(unsafe_code)]
 
@@ -32,7 +29,7 @@ use super::pack::{packed_len, panel_count};
 /// of packed W + 12 FMAs into the 12-ymm accumulator tile. 14 load uops
 /// against 12 FMAs — comfortably FMA-bound on Raptor Lake (3 load ports,
 /// 2 FMA ports). 12 acc + 2 W + 1 broadcast = 15 live ymm; fits in 16 with
-/// one register to spare for the next-K weight prefetch (M5).
+/// one register to spare for the next-K weight prefetch.
 const M_R_AVX2: usize = 16;
 const N_R_AVX2: usize = 6;
 
@@ -214,9 +211,9 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 /// - the trailing batch rows (`batch % N_R != 0`) of every panel
 /// - the entire trailing panel (`d_sae % M_R != 0`)
 ///
-/// Per-output arithmetic matches `kernels::scalar::encode_f32` exactly
-/// (bias-init + left-to-right K reduction), so this code path is bit-equal
-/// to the legacy scalar — only the fast SIMD path introduces the FMA
+/// Per-output arithmetic matches the scalar tiled reference exactly
+/// (bias-init + left-to-right K reduction), so this code path is
+/// bit-equal to it — only the fast SIMD path introduces the FMA
 /// reordering that drives the 1e-5 tolerance.
 ///
 /// # Safety

@@ -17,8 +17,8 @@ impl TopKScratch {
 
 /// Sparsification strategy applied to pre-activations.
 ///
-/// One variant per architecture supported in v0. BatchTopK and Standard
-/// (ReLU+L1) are resolved at load time into one of these:
+/// BatchTopK and Standard (ReLU+L1) are resolved at load time into one
+/// of these:
 /// - BatchTopK → JumpReLU with the saved per-feature thresholds.
 /// - Standard → Relu.
 #[derive(Debug, Clone)]
@@ -74,7 +74,7 @@ impl Sparsifier {
     }
 }
 
-#[allow(clippy::too_many_arguments)] // private kernel helper; refactored in M3 along with SIMD dispatch
+#[allow(clippy::too_many_arguments)]
 fn apply_topk(
     pre_acts: &mut [f32],
     tile_rows: usize,

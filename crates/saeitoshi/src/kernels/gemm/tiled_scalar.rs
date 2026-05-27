@@ -1,22 +1,17 @@
 //! Scalar reference for the tiled GEMM encoder.
 //!
-//! This backend exercises the packed-panel layout but does the actual FMAs
-//! in plain scalar Rust. Its job is to prove the packing format is
-//! addressed correctly — once SIMD microkernels land in M3, they must
-//! agree with this reference at 1e-5.
+//! Exercises the packed-panel layout but performs the FMAs in plain
+//! scalar Rust. The SIMD microkernels must agree with this reference at
+//! 1e-5 — it's the parity oracle for [`super::tiled_x86`] and
+//! [`super::tiled_neon`].
 //!
-//! Numerical contract: bit-exact match against the row-major scalar
-//! reference in `kernels::scalar`. We achieve this by computing each
-//! `<W_enc[f], x[b]>` as a full d_in-length reduction with the same
-//! left-to-right accumulation order, just reading W via the packed
-//! address formula instead of the row-major one. No K-chunking, no
-//! cross-lane reordering — the FMA chain is identical to the row-major
-//! scalar's, so the f32 results are bit-equal.
-//!
-//! K-chunking is reintroduced in M3's AVX2 microkernel; the parity gate
-//! there relaxes to 1e-5 absolute error rather than bit-exact, which the
-//! design analysis (docs/perf-analysis.md, "Parity preservation" section)
-//! shows is well within the d_in=2048 worst-case ULP bound.
+//! Numerical contract: each `<W_enc[f], x[b]>` is computed as a full
+//! d_in-length reduction with left-to-right accumulation, reading W via
+//! the packed address formula. No K-chunking, no cross-lane reordering;
+//! the FMA chain matches a row-major scalar reduction bit-for-bit. The
+//! SIMD variants reorder K reduction by lane and the resulting ULP delta
+//! is bounded ≤1e-5 for our d_in range (see docs/perf-analysis.md,
+//! "Parity preservation").
 
 use crate::kernels::Backend;
 use crate::sae::{EncoderWeights, WeightLayout};

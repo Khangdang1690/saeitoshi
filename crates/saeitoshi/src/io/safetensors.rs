@@ -8,8 +8,8 @@ use crate::error::{Result, SaeError};
 /// Read a safetensors file fully into memory and return the parsed view + the
 /// owning buffer (so callers can hold tensor views without lifetime tricks).
 ///
-/// For huge SAEs (`d_sae` ≈ 4M, 40+ GB at FP32) we'll switch to mmap in M4 —
-/// for M1's tiny-fixture parity tests, full-buffer read is simpler.
+/// For huge SAEs (`d_sae` ≈ 4M, 40+ GB at FP32) this should switch to
+/// mmap; for the SAE sizes we ship today, full-buffer read is simpler.
 pub struct SafetensorsFile {
     buf: Vec<u8>,
 }
