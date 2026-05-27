@@ -16,8 +16,6 @@ pub mod normalize;
 pub mod sae;
 pub mod sit;
 pub mod sparsify;
-pub mod stream;
-pub mod topk_examples;
 
 pub use config::{Architecture, NormalizeMode, SaeConfig, WeightDtype};
 pub use error::{Result, SaeError};
