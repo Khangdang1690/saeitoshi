@@ -118,7 +118,6 @@ What perf-v2 actually changes:
 
 Knobs:
 
-- `SAEITOSHI_TOPK=legacy` — force the v0 full-sort TopK selection.
 - `SAEITOSHI_GEMM_TILE=MC,NC,KC` — override the M-block grouping (MC).
 - `SAEITOSHI_NO_PARALLEL=1` — disable rayon parallelism entirely.
 

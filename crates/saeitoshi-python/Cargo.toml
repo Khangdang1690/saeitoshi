@@ -20,6 +20,3 @@ pyo3 = { version = "0.22", features = ["extension-module", "abi3-py310"] }
 numpy = "0.22"
 ndarray.workspace = true
 
-[features]
-default = ["topk-v2"]
-topk-v2 = ["saeitoshi/topk-v2"]

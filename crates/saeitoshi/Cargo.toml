@@ -44,9 +44,3 @@ harness = false
 name = "topk"
 harness = false
 
-[features]
-default = ["topk-v2"]
-# Heap-based partial-sort TopK with branchless CAS + rayon row-level
-# threading. See docs/perf-analysis.md. (Deleted in the next commit; the
-# heap path becomes unconditional.)
-topk-v2 = []

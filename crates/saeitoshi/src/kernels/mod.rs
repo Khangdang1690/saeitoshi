@@ -8,14 +8,9 @@
 
 use crate::sae::EncoderWeights;
 
-pub mod scalar;
-
 pub mod decoder;
 pub mod encoder;
 pub mod gemm;
-pub mod topk;
-
-#[cfg(feature = "topk-v2")]
 pub mod topk_heap;
 
 /// Encoder kernel signature. Implementations must be **safe to call** —

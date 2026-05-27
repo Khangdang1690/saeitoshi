@@ -1,22 +1,16 @@
 //! Heap-based partial-sort TopK selection.
 //!
-//! Replaces the legacy full-sort path in `kernels::scalar::topk_select`
-//! (O(d_sae log d_sae)) with a k-element min-heap partial sort
-//! (O(d_sae log k)). At the v0.2 headline shape (d_sae=16384, k=32),
-//! that's a ~3x algorithmic win on comparisons alone.
+//! O(n log k) instead of the full-sort O(n log n). Comparison is via an
+//! integer-encoded ranking key (`(value DESC, index ASC)` packed into a
+//! `u64`) so the inner loop compiles to a single 64-bit compare with no
+//! closure overhead. LLVM turns the predicate into `cmov`/`csel` on
+//! common targets, avoiding mispredicts on the late-scan "no replace"
+//! branch.
 //!
-//! Comparison is implemented via an integer-encoded ranking key
-//! (`(value DESC, index ASC)` packed into a `u64`) so the inner loop
-//! compiles to a single 64-bit compare with no closure overhead. LLVM
-//! turns the predicate into `cmov`/`csel` on common targets, avoiding
-//! mispredicts on the late-scan "no replace" branch.
-//!
-//! Output contract matches `scalar::topk_select` exactly:
+//! Output contract:
 //! - Select the k largest scores.
 //! - Tie-break by index ascending.
 //! - Write into `scratch.indexed` sorted by index ascending.
-//!
-//! See `crates/saeitoshi/tests/topk_parity.rs` for the parity gate.
 
 use crate::sparsify::TopKScratch;
 
@@ -104,9 +98,6 @@ fn heapify(heap: &mut [(u32, f32)]) {
 /// Select the k largest entries from `scores`, write them sorted by
 /// index ascending into `scratch.indexed`. Ties broken by index
 /// ascending.
-///
-/// Equivalent in output to `kernels::scalar::topk_select`, but
-/// algorithmically O(n log k) instead of O(n log n).
 pub fn topk_select(scores: &[f32], k: usize, scratch: &mut TopKScratch) {
     let n = scores.len();
     let k = k.min(n);
@@ -188,7 +179,34 @@ mod tests {
     }
 
     #[test]
-    fn matches_scalar_reference_on_random_input() {
+    fn handles_negative_values_correctly() {
+        let out = run(&[-1.0, -3.0, 2.0, -0.5, 5.0, -100.0, 0.0], 3);
+        let idx: Vec<u32> = out.iter().map(|&(i, _)| i).collect();
+        // Top-3: 5.0 (idx 4), 2.0 (idx 2), 0.0 (idx 6) -> index-asc [2, 4, 6].
+        assert_eq!(idx, vec![2, 4, 6]);
+    }
+
+    #[test]
+    fn random_input_against_full_sort_oracle() {
+        // Self-test the contract against an explicit full-sort oracle so
+        // any change to the heap code that breaks the tie-break or
+        // ordering rule fails here, not in downstream Python parity.
+        fn full_sort_oracle(scores: &[f32], k: usize) -> Vec<(u32, f32)> {
+            let mut indexed: Vec<(u32, f32)> = scores
+                .iter()
+                .enumerate()
+                .map(|(i, &v)| (i as u32, v))
+                .collect();
+            indexed.sort_by(|a, b| {
+                b.1.partial_cmp(&a.1)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| a.0.cmp(&b.0))
+            });
+            indexed.truncate(k.min(scores.len()));
+            indexed.sort_by_key(|&(i, _)| i);
+            indexed
+        }
+
         let mut scores: Vec<f32> = Vec::with_capacity(513);
         let mut state: u32 = 0xC0FFEE;
         for _ in 0..513 {
@@ -197,19 +215,9 @@ mod tests {
             scores.push(v);
         }
         for &k in &[1usize, 3, 32, 100, 512] {
-            let mut scratch_a = TopKScratch::new();
-            let mut scratch_b = TopKScratch::new();
-            topk_select(&scores, k, &mut scratch_a);
-            crate::kernels::scalar::topk_select(&scores, k, &mut scratch_b);
-            assert_eq!(scratch_a.indexed, scratch_b.indexed, "k={k}");
+            let heap_out = run(&scores, k);
+            let oracle = full_sort_oracle(&scores, k);
+            assert_eq!(heap_out, oracle, "k={k}");
         }
-    }
-
-    #[test]
-    fn handles_negative_values_correctly() {
-        let out = run(&[-1.0, -3.0, 2.0, -0.5, 5.0, -100.0, 0.0], 3);
-        let idx: Vec<u32> = out.iter().map(|&(i, _)| i).collect();
-        // Top-3: 5.0 (idx 4), 2.0 (idx 2), 0.0 (idx 6) -> index-asc [2, 4, 6].
-        assert_eq!(idx, vec![2, 4, 6]);
     }
 }

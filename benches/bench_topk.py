@@ -1,8 +1,7 @@
-"""TopK-focused micro-bench. Compares v0.2 heap path against the legacy
-full-sort by toggling `SAEITOSHI_TOPK=legacy` between runs.
-
-The matmul portion of encode is identical across runs (same perf-v2
-backend), so the per-shape delta isolates the TopK improvement.
+"""TopK-focused micro-bench. Measures end-to-end `encode` time across a
+sweep of (d_in, d_sae, batch) shapes — the TopK kernel is the dominant
+cost at the v0.2+ headline shapes, so this isolates regressions in the
+heap kernel from regressions in the matmul.
 
 Usage (with the project's .venv active):
     python benches/bench_topk.py
@@ -15,8 +14,6 @@ import argparse
 import gc
 import json
 import os
-import subprocess
-import sys
 import tempfile
 import time
 from dataclasses import dataclass
@@ -89,25 +86,6 @@ def time_call(fn, warm: int, iters: int) -> float:
     return samples[len(samples) // 2]
 
 
-def run_for_backend(shapes, k, seed, warm, iters):
-    # Import lazily so SAEITOSHI_TOPK env is observed at first call.
-    import sae as saeitoshi
-
-    rows = []
-    for shape in shapes:
-        with tempfile.TemporaryDirectory() as td:
-            td_path = Path(td)
-            write_saelens_dir(td_path, shape, k=k, seed=seed)
-            si_sae = saeitoshi.SAE.load(str(td_path))
-            rng = np.random.default_rng(shape.batch * 31 + seed)
-            x = rng.standard_normal(
-                (shape.batch, shape.d_in), dtype=np.float32
-            ).astype(np.float32, copy=False)
-            t = time_call(lambda: si_sae.encode(x), warm=warm, iters=iters)
-            rows.append((shape, t))
-    return rows
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -120,92 +98,30 @@ def main():
     parser.add_argument("--iters", type=int, default=11)
     parser.add_argument("--k", type=int, default=32)
     parser.add_argument("--seed", type=int, default=11)
-    parser.add_argument(
-        "--mode",
-        choices=("compare", "heap", "legacy"),
-        default="compare",
-        help=(
-            "compare: run both legacy and heap in child processes "
-            "(so SAEITOSHI_TOPK is honored). heap/legacy: run once "
-            "in the current process honoring the current env."
-        ),
-    )
     args = parser.parse_args()
     shapes = args.shapes or DEFAULT_SHAPES
 
-    if args.mode in ("heap", "legacy"):
-        os.environ["SAEITOSHI_TOPK"] = args.mode if args.mode == "legacy" else ""
-        rows = run_for_backend(shapes, args.k, args.seed, args.warm, args.iters)
-        for shape, t in rows:
-            print(f"{shape.label}  {t * 1000:>9.2f} ms")
-        return
+    import sae as saeitoshi
 
-    # `compare` mode: spawn one child per backend, capture median timings,
-    # diff them.
     print(
-        f"# bench_topk — TopK isolated comparison, k={args.k}, "
-        f"warm={args.warm}, iters={args.iters} (median), "
-        f"cpu_count={os.cpu_count()}"
+        f"# bench_topk — heap TopK, k={args.k}, warm={args.warm}, "
+        f"iters={args.iters} (median), cpu_count={os.cpu_count()}"
     )
     print()
-    print(
-        f"| {'shape':<32} | {'legacy (ms)':>12} | {'heap (ms)':>12} | "
-        f"{'speedup':>9} |"
-    )
-    print(f"|{'-' * 34}|{'-' * 14}|{'-' * 14}|{'-' * 11}|")
-
-    shape_args: list[str] = []
-    for shape in shapes:
-        shape_args += ["--shapes", f"{shape.d_in},{shape.d_sae},{shape.batch}"]
-
-    def child(mode: str) -> dict[str, float]:
-        env = dict(os.environ)
-        if mode == "legacy":
-            env["SAEITOSHI_TOPK"] = "legacy"
-        else:
-            env.pop("SAEITOSHI_TOPK", None)
-        result = subprocess.run(
-            [
-                sys.executable,
-                __file__,
-                "--mode",
-                mode,
-                "--k",
-                str(args.k),
-                "--seed",
-                str(args.seed),
-                "--warm",
-                str(args.warm),
-                "--iters",
-                str(args.iters),
-                *shape_args,
-            ],
-            env=env,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        out = {}
-        for line in result.stdout.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            # "d_in=  512 d_sae=  8192 B= 4096   1234.56 ms"
-            label, _, rest = line.rpartition("  ")
-            t_ms = float(rest.split()[0])
-            out[label.strip()] = t_ms
-        return out
-
-    legacy = child("legacy")
-    heap = child("heap")
+    print(f"| {'shape':<32} | {'encode (ms)':>12} |")
+    print(f"|{'-' * 34}|{'-' * 14}|")
 
     for shape in shapes:
-        l = legacy.get(shape.label, float("nan"))
-        h = heap.get(shape.label, float("nan"))
-        speedup = f"{l / h:>7.2f}x" if h > 0 else "n/a"
-        print(
-            f"| {shape.label:<32} | {l:>11.1f}  | {h:>11.1f}  | {speedup:>9} |"
-        )
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            write_saelens_dir(td_path, shape, k=args.k, seed=args.seed)
+            si_sae = saeitoshi.SAE.load(str(td_path))
+            rng = np.random.default_rng(shape.batch * 31 + args.seed)
+            x = rng.standard_normal((shape.batch, shape.d_in), dtype=np.float32).astype(
+                np.float32, copy=False
+            )
+            t = time_call(lambda: si_sae.encode(x), warm=args.warm, iters=args.iters)
+        print(f"| {shape.label:<32} | {t * 1000:>11.1f}  |")
 
 
 if __name__ == "__main__":
