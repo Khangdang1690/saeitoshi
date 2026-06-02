@@ -5,7 +5,7 @@
 `saeitoshi` is a Rust core + Python bindings library for decoding LLM activations through trained Sparse Autoencoders (SAEs). It's the FAISS-equivalent for mech-interp work: a no-brainer dependency that loads any common SAE checkpoint format and runs `encode` / `decode` / `reconstruct` with hand-tuned SIMD kernels (AVX-512 / AVX2 / NEON) and runtime CPU dispatch.
 
 ## Install
-
+ 
 ```bash
 pip install saeitoshi
 ```
